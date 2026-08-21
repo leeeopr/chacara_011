@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-color: #f8fafc;
+    --text-color: #1e293b;
+    --glass-bg: rgba(255, 255, 255, 0.7);
+    --glass-border: rgba(0, 0, 0, 0.05);
+    --glass-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+    --orb-opacity: 0.1;
+    --accent-color: #FFD600;
+  }
+
+  .dark {
+    --bg-color: #0A0F2C;
+    --text-color: #f1f5f9;
+    --glass-bg: rgba(255, 255, 255, 0.05);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    --orb-opacity: 0.2;
+    --accent-color: #FFD600;
+  }
+
+  body {
+    @apply min-h-[100dvh] transition-colors duration-300;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    background-attachment: fixed;
+  }
+
+  .dark body {
+    background: radial-gradient(circle at 20% 20%, #1A1446 0%, transparent 40%),
+                radial-gradient(circle at 80% 80%, #121A3A 0%, transparent 40%),
+                #0A0F2C;
+  }
+
+  body:not(.dark) {
+    background: radial-gradient(circle at 20% 20%, #071c36 0%, transparent 40%),
+                radial-gradient(circle at 80% 80%, #044789 0%, transparent 40%),
+                #f8fafc;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply backdrop-blur-[20px] border transition-all duration-300;
+    background: var(--glass-bg);
+    border-color: var(--glass-border);
+    box-shadow: var(--glass-shadow);
+  }
+
+  .glass-border {
+    border: 1px solid var(--glass-border);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+
+  .glass-reflection {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .glass-reflection::before {
+    content: "";
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(
+      45deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.03) 45%,
+      rgba(255, 255, 255, 0.07) 50%,
+      rgba(255, 255, 255, 0.03) 55%,
+      transparent 100%
+    );
+    transform: rotate(-45deg);
+    pointer-events: none;
+  }
+
+  .animate-spin-slow {
+    animation: spin 3s linear infinite;
+  }
+
+  .orb {
+    @apply absolute rounded-full blur-[100px] pointer-events-none transition-opacity duration-300;
+    opacity: var(--orb-opacity);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 8px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

@@ -1,0 +1,18 @@
+import { defineConfig } from "eslint/config";
+import next from "eslint-config-next";
+
+export default defineConfig([
+  {
+    extends: [...next],
+    rules: {
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/immutability": "off",
+      "react-hooks/preserve-manual-memoization": "off",
+      "react-hooks/purity": "off",
+      "react-hooks/rules-of-hooks": "warn",
+      "react-hooks/exhaustive-deps": "warn",
+      "react/no-unescaped-entities": "off",
+      "@next/next/no-img-element": "warn"
+    }
+  }
+]);

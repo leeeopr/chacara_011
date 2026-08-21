@@ -1,0 +1,8 @@
+{
+  "name": "CHÁCARA",
+  "description": "Sistema completo de gestão, reservas, contas a pagar, equipe operacional e controle financeiro de chácaras e eventos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
