@@ -220,13 +220,24 @@ export interface AccountsPayableFilters {
 
 export type PeriodPreset = 'THIS_MONTH' | 'LAST_MONTH' | 'NEXT_MONTH' | 'CUSTOM';
 
+export interface OperationalRevenuePaymentDetail {
+  id?: string;
+  amount: number;
+  payment_date: string;
+  payment_method?: string;
+  receipt_url?: string;
+  notes?: string;
+  is_proven?: boolean;
+}
+
 export interface OperationalRevenueItem {
   id: string;
   reservation_id: string;
   guest_name: string;
   descricao: string;
   valor_total: number;
-  valor_recebido: number;
+  valor_recebido: number; // Received in the selected period
+  valor_total_recebido?: number; // Total received all time for this reservation
   valor_pendente: number;
   data_referencia: string; // checkin_date or payment_date
   data_checkout?: string;
@@ -235,6 +246,9 @@ export interface OperationalRevenueItem {
   origem: string;
   status: string;
   payments_count: number;
+  payments_detail?: OperationalRevenuePaymentDetail[];
+  has_receipt_document?: boolean;
+  is_avulsa?: boolean;
 }
 
 export const ACCOUNT_PAYABLE_CATEGORIES: { value: AccountPayableCategory; label: string }[] = [

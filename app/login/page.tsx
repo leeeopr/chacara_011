@@ -31,18 +31,9 @@ export default function LoginPage() {
     setIsLoading(true);
     setError(null);
 
-    const cleanEmail = email.trim().toLowerCase();
-
-    if ((cleanEmail === 'demo@chacaras.com' || cleanEmail === 'demo@chacara.com') && password === 'demo123') {
-      setAppMode('DEMO');
-      window.location.href = '/';
-      return;
-    }
-
     try {
-      setAppMode('PRODUCTION');
       const { error } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim(),
         password,
       });
 
@@ -56,12 +47,6 @@ export default function LoginPage() {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleDemoModeLogin = () => {
-    setIsLoading(true);
-    setAppMode('DEMO');
-    window.location.href = '/';
   };
 
   return (
@@ -218,27 +203,10 @@ export default function LoginPage() {
               </button>
             </form>
 
-            {/* Demo Mode Button */}
-            <div className="mt-6 pt-5 border-t border-white/10 text-center">
-              <p className="text-xs text-slate-400 mb-2.5 font-medium">Demonstração sem cadastro:</p>
-              <button
-                type="button"
-                onClick={handleDemoModeLogin}
-                disabled={isLoading}
-                className="w-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2 text-xs tracking-wide group cursor-pointer"
-              >
-                <Sparkles size={16} className="text-emerald-400 group-hover:rotate-12 transition-transform" />
-                <span>Acessar Modo Demonstração</span>
-              </button>
-              <p className="text-[11px] text-slate-400 mt-2 font-mono">
-                E-mail: <span className="text-emerald-300 font-semibold">demo@chacaras.com</span> | Senha: <span className="text-emerald-300 font-semibold">demo123</span>
-              </p>
-            </div>
-
             {/* Footer Text */}
             <div className="mt-6 text-center border-t border-white/5 pt-4">
               <p className="text-[11px] text-slate-500 font-medium">
-                Sistema de gerenciamento de chácaras.
+                Autenticação direta via Supabase Auth.
               </p>
             </div>
 

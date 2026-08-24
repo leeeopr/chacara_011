@@ -215,25 +215,79 @@ export default function MonthlyRevenuesSection({
 
                 {/* Expanded Details Drawer */}
                 {isExpanded && (
-                  <div className="p-3.5 bg-black/30 border border-white/5 rounded-xl text-xs space-y-2 animate-fadeIn">
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-white/80">
+                  <div className="p-3.5 bg-black/30 border border-white/5 rounded-xl text-xs space-y-3 animate-fadeIn">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-white/80 pb-2 border-b border-white/5">
                       <div>
                         <span className="text-[10px] uppercase font-bold text-white/40 block">Valor Total Contratado</span>
                         <span className="font-bold text-white">{formatBRL(rev.valor_total)}</span>
                       </div>
                       <div>
-                        <span className="text-[10px] uppercase font-bold text-white/40 block">Valor Efetivamente Pago</span>
+                        <span className="text-[10px] uppercase font-bold text-white/40 block">Valor Recebido no Mês</span>
                         <span className="font-bold text-emerald-400">{formatBRL(rev.valor_recebido)}</span>
                       </div>
                       <div>
                         <span className="text-[10px] uppercase font-bold text-white/40 block">Saldo em Aberto</span>
-                        <span className="font-bold text-amber-300">{formatBRL(Math.max(0, rev.valor_total - rev.valor_recebido))}</span>
+                        <span className="font-bold text-amber-300">{formatBRL(Math.max(0, rev.valor_total - (rev.valor_total_recebido || rev.valor_recebido)))}</span>
                       </div>
                       <div>
-                        <span className="text-[10px] uppercase font-bold text-white/40 block">Pagamentos Registrados</span>
-                        <span className="font-bold text-purple-300">{rev.payments_count} recebimento(s)</span>
+                        <span className="text-[10px] uppercase font-bold text-white/40 block">Recebimentos no Período</span>
+                        <span className="font-bold text-purple-300">{rev.payments_count} lançamento(s)</span>
                       </div>
                     </div>
+
+                    {/* Itemized Payment Details */}
+                    {rev.payments_detail && rev.payments_detail.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        <span className="text-[10px] uppercase font-black text-white/40 tracking-wider block">
+                          Detalhamento das Parcelas / Recebimentos ({rev.payments_detail.length})
+                        </span>
+                        <div className="space-y-1">
+                          {rev.payments_detail.map((pay, idx) => (
+                            <div
+                              key={pay.id || idx}
+                              className="flex items-center justify-between p-2 rounded-lg bg-white/[0.02] border border-white/5 text-[11px]"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px]">
+                                  {idx + 1}
+                                </span>
+                                <span className="text-white/70">
+                                  {pay.payment_date ? new Date(pay.payment_date + 'T00:00:00').toLocaleDateString('pt-BR') : 'Data não informada'}
+                                </span>
+                                {pay.payment_method && (
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/20 text-purple-300">
+                                    {pay.payment_method}
+                                  </span>
+                                )}
+                                {pay.notes && (
+                                  <span className="text-white/40 italic">
+                                    ({pay.notes})
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-3">
+                                <span className="font-black text-emerald-400">
+                                  {formatBRL(pay.amount)}
+                                </span>
+                                {pay.receipt_url && (
+                                  <a
+                                    href={pay.receipt_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-1 rounded bg-white/5 hover:bg-white/10 text-emerald-300 hover:text-emerald-200 transition-colors inline-flex items-center gap-1 text-[10px]"
+                                    title="Ver comprovante anexado"
+                                  >
+                                    <ExternalLink size={11} />
+                                    <span>Comprovante</span>
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -19,17 +19,9 @@ import {
   OperationalRecurrenceRule,
   OperationalEvent,
   OperationalEventStatus,
-  StaffUnavailability
+  StaffUnavailability,
+  getEffectiveReservationPrice
 } from '@/lib/chacaraTypes';
-import {
-  EmergencyFund,
-  EmergencyFundTransaction,
-  EmergencyFundSummary,
-  ChacaraEmergencyContribution,
-  RecordExpenseInput,
-  RecordManualContributionInput,
-  RecordManualWithdrawalInput
-} from '@/lib/emergencyFundTypes';
 import { 
   DEMO_CHACARAS, 
   DEMO_CLIENTS, 
@@ -63,8 +55,6 @@ interface DemoDataStore {
   operationalRecurrenceRules: OperationalRecurrenceRule[];
   operationalEvents: OperationalEvent[];
   staffUnavailability: StaffUnavailability[];
-  emergencyFund?: EmergencyFund;
-  emergencyFundTransactions?: EmergencyFundTransaction[];
 }
 
 let inMemoryStore: DemoDataStore | null = null;
@@ -84,19 +74,6 @@ function initializeDefaultStore(): DemoDataStore {
 
   // Pre-generate payments for confirmed/checkout reservations
   const payments: ReservationPayment[] = [];
-  const emergencyFundTransactions: EmergencyFundTransaction[] = [];
-  let runningEmergencyBalance = 0;
-
-  const emergencyFund: EmergencyFund = {
-    id: '00000000-0000-0000-0000-000000000001',
-    name: 'Reserva de Emergência',
-    description: 'Fundo destinado exclusivamente a despesas inesperadas, danos estruturais, manutenções emergenciais e reparos na infraestrutura das chácaras.',
-    default_percentage: 20.00,
-    current_balance: 0,
-    status: 'ATIVO',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  };
 
   reservations.forEach((r, idx) => {
     if (r.status === 'CONFIRMADA' || r.status === 'CHECKOUT_REALIZADO' || r.status === 'HOSPEDADO' || r.status === 'CHECKIN_REALIZADO') {
@@ -114,56 +91,9 @@ function initializeDefaultStore(): DemoDataStore {
           notes: 'Pagamento de reserva de demonstração',
           created_by: 'Sistema Demo'
         });
-
-        // 20% auto-allocation for emergency fund
-        const alloc = Math.round(paid * 0.20 * 100) / 100;
-        runningEmergencyBalance += alloc;
-        emergencyFundTransactions.push({
-          id: `tx-em-${payId}`,
-          fund_id: emergencyFund.id,
-          chacara_id: r.chacara_id || null,
-          chacara_name: r.chacara?.name || null,
-          reservation_id: r.id,
-          reservation_code: r.code || null,
-          payment_id: payId,
-          transaction_type: 'APORTE_AUTOMATICO',
-          amount: alloc,
-          gross_amount: paid,
-          percentage_applied: 20,
-          balance_after: runningEmergencyBalance,
-          category: 'RECEITA_ALUGUEL_20%',
-          description: `Aporte Automático (20%) - Reserva #${r.code || 'N/A'}`,
-          performed_by: 'Sistema Automático',
-          notes: 'Dedução automática preventiva',
-          created_at: r.created_at || new Date().toISOString()
-        });
       }
     }
   });
-
-  // Add 2 realistic emergency maintenance expenses
-  if (chacaras.length > 0) {
-    const c1 = chacaras[0];
-    const exp1Amt = 680.00;
-    runningEmergencyBalance -= exp1Amt;
-    emergencyFundTransactions.push({
-      id: `tx-em-exp-1`,
-      fund_id: emergencyFund.id,
-      chacara_id: c1.id,
-      chacara_name: c1.name,
-      transaction_type: 'RETIRADA_DESPESA',
-      amount: -exp1Amt,
-      gross_amount: exp1Amt,
-      balance_after: runningEmergencyBalance,
-      category: 'MANUTENCAO_HIDRAULICA',
-      description: `Conserto emergencial da bomba da piscina e troca de registro - ${c1.name}`,
-      performed_by: 'Carlos Gerente',
-      notes: 'Nota fiscal anexada / Serviço executado em regime de urgência',
-      created_at: new Date(Date.now() - 5 * 86400000).toISOString()
-    });
-  }
-
-  emergencyFund.current_balance = Math.max(0, runningEmergencyBalance);
 
   return {
     owners,
@@ -181,9 +111,7 @@ function initializeDefaultStore(): DemoDataStore {
     operationalEventTypes: operationalEventTypes || [],
     operationalRecurrenceRules: operationalRecurrenceRules || [],
     operationalEvents: operationalEvents || [],
-    staffUnavailability: staffUnavailability || [],
-    emergencyFund,
-    emergencyFundTransactions
+    staffUnavailability: staffUnavailability || []
   };
 }
 
@@ -219,50 +147,6 @@ function ensureStoreFields(store: DemoDataStore) {
     );
   }
   if (!Array.isArray(store.staffUnavailability)) store.staffUnavailability = [];
-  if (!store.emergencyFund) {
-    store.emergencyFund = {
-      id: '00000000-0000-0000-0000-000000000001',
-      name: 'Reserva de Emergência',
-      description: 'Fundo destinado exclusivamente a despesas inesperadas, danos estruturais, manutenções emergenciais e reparos na infraestrutura das chácaras.',
-      default_percentage: 20.00,
-      current_balance: 0,
-      status: 'ATIVO',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-  }
-  if (!Array.isArray(store.emergencyFundTransactions)) {
-    store.emergencyFundTransactions = [];
-    // Populate retroactively from payments
-    let runningBal = 0;
-    const txs: EmergencyFundTransaction[] = [];
-    (store.payments || []).forEach(p => {
-      const res = store.reservations.find(r => r.id === p.reservation_id);
-      const alloc = Math.round(Number(p.amount) * 0.20 * 100) / 100;
-      runningBal += alloc;
-      txs.push({
-        id: `tx-em-${p.id}`,
-        fund_id: store.emergencyFund!.id,
-        chacara_id: res?.chacara_id || null,
-        chacara_name: res?.chacara?.name || null,
-        reservation_id: res?.id || null,
-        reservation_code: res?.code || null,
-        payment_id: p.id,
-        transaction_type: 'APORTE_AUTOMATICO',
-        amount: alloc,
-        gross_amount: Number(p.amount),
-        percentage_applied: 20,
-        balance_after: runningBal,
-        category: 'RECEITA_ALUGUEL_20%',
-        description: `Aporte Automático (20%) - Reserva #${res?.code || 'N/A'}`,
-        performed_by: 'Sistema Automático',
-        notes: 'Dedução automática preventiva',
-        created_at: p.payment_date || new Date().toISOString()
-      });
-    });
-    store.emergencyFundTransactions = txs;
-    store.emergencyFund.current_balance = runningBal;
-  }
 }
 
 function getStore(): DemoDataStore {
@@ -1244,6 +1128,7 @@ export const demoRepository = {
     const receitaPorChacara: Record<string, { chacaraName: string; total: number; count: number }> = {};
     const receitaPorOrigem: Record<string, { total: number; count: number }> = {};
     const itemsList: any[] = [];
+    const revenueItems: any[] = [];
 
     for (const res of reservations) {
       const summary = await this.getReservationFinancialSummary(res);
@@ -1265,6 +1150,38 @@ export const demoRepository = {
         receitaPorOrigem[orig].count += 1;
 
         totalNights += (res.financial_summary?.nights_count || 2);
+
+        if (summary.total_received > 0) {
+          const guestName = res.client?.full_name || 'Hóspede Direto';
+          const title = res.code || res.chacara?.name || 'Hospedagem';
+          revenueItems.push({
+            id: res.id,
+            reservation_id: res.id,
+            guest_name: guestName,
+            descricao: `Reserva ${title}`,
+            valor_total: summary.total_contracted,
+            valor_recebido: summary.total_received,
+            valor_total_recebido: summary.total_received,
+            valor_pendente: Math.max(0, summary.net_balance),
+            data_referencia: res.checkin_date,
+            data_checkout: res.checkout_date,
+            chacara_id: res.chacara_id,
+            chacara_nome: cName,
+            origem: orig,
+            status: summary.financial_status || 'EM_ABERTO',
+            payments_count: summary.payments.length || 1,
+            payments_detail: summary.payments.map((p: any) => ({
+              id: p.id,
+              amount: Number(p.amount || 0),
+              payment_date: p.payment_date || res.checkin_date,
+              payment_method: p.payment_method || 'PIX',
+              notes: p.notes,
+              is_proven: true
+            })),
+            has_receipt_document: false,
+            is_avulsa: false
+          });
+        }
       }
     }
 
@@ -1284,7 +1201,8 @@ export const demoRepository = {
       valorMedioDiaria: 1150,
       receitaPorChacara,
       receitaPorOrigem,
-      itemsList
+      itemsList,
+      revenueItems
     };
   },
 
@@ -1798,391 +1716,6 @@ export const demoRepository = {
     store.staffUnavailability.push(newItem);
     saveStore(store);
     return newItem;
-  },
-
-  async getOrCreateEmergencyFund(): Promise<EmergencyFund> {
-    const store = getStore();
-    return store.emergencyFund!;
-  },
-
-  async getEmergencyFundSummary(filters?: {
-    chacara_id?: string;
-    startDate?: string;
-    endDate?: string;
-  }): Promise<EmergencyFundSummary> {
-    const store = getStore();
-    const fund = store.emergencyFund!;
-    let txs = store.emergencyFundTransactions || [];
-
-    if (filters?.chacara_id && filters.chacara_id !== 'TODAS') {
-      txs = txs.filter(t => t.chacara_id === filters.chacara_id);
-    }
-    if (filters?.startDate) {
-      txs = txs.filter(t => t.created_at >= `${filters.startDate}T00:00:00.000Z`);
-    }
-    if (filters?.endDate) {
-      txs = txs.filter(t => t.created_at <= `${filters.endDate}T23:59:59.999Z`);
-    }
-
-    const percentage = Number(fund.default_percentage || 20);
-
-    // Active reservations in demo store
-    let activeReservations = store.reservations.filter(
-      r => !r.is_deleted && r.status !== 'CANCELADA'
-    );
-    if (filters?.chacara_id && filters.chacara_id !== 'TODAS') {
-      activeReservations = activeReservations.filter(r => r.chacara_id === filters.chacara_id);
-    }
-    if (filters?.startDate) {
-      activeReservations = activeReservations.filter(r => r.checkin_date >= filters.startDate!);
-    }
-    if (filters?.endDate) {
-      activeReservations = activeReservations.filter(r => r.checkin_date <= filters.endDate!);
-    }
-
-    let totalReservationsGrossVolume = 0;
-    const chacaraReservationsVolume: Record<string, { name: string; volume: number; count: number }> = {};
-
-    activeReservations.forEach(r => {
-      let rPrice = 0;
-      if (r.is_custom_price && r.custom_price != null && Number(r.custom_price) > 0) {
-        rPrice = Number(r.custom_price);
-      } else if (r.financial_summary && Number(r.financial_summary.total_amount) > 0) {
-        rPrice = Number(r.financial_summary.total_amount);
-      } else {
-        rPrice = 1500;
-      }
-      totalReservationsGrossVolume += rPrice;
-
-      const cId = r.chacara_id || 'sem_chacara';
-      const c = store.chacaras.find(ch => ch.id === cId);
-      const cName = c?.name || (cId === 'sem_chacara' ? 'Geral / Não Especificada' : 'Chácara');
-
-      if (!chacaraReservationsVolume[cId]) {
-        chacaraReservationsVolume[cId] = { name: cName, volume: 0, count: 0 };
-      }
-      chacaraReservationsVolume[cId].volume += rPrice;
-      chacaraReservationsVolume[cId].count += 1;
-    });
-
-    let currentBalance = 0;
-    let totalAccumulated = 0;
-    let totalUsed = 0;
-    let totalRefunded = 0;
-    const contributingResIds = new Set<string>();
-    const chacaraMap: Record<string, ChacaraEmergencyContribution> = {};
-
-    Object.keys(chacaraReservationsVolume).forEach(cId => {
-      const info = chacaraReservationsVolume[cId];
-      const idealAmt = Math.round((info.volume * (percentage / 100)) * 100) / 100;
-      chacaraMap[cId] = {
-        chacara_id: cId,
-        chacara_name: info.name,
-        reservations_count: info.count,
-        reservations_gross_volume: Math.round(info.volume * 100) / 100,
-        ideal_speculated_amount: idealAmt,
-        total_allocated: 0,
-        total_used: 0,
-        net_contribution: 0,
-        coverage_percentage: 0,
-        transactions_count: 0
-      };
-    });
-
-    txs.forEach(tx => {
-      const amt = Number(tx.amount || 0);
-      currentBalance += amt;
-      if (amt > 0) {
-        totalAccumulated += amt;
-      } else if (tx.transaction_type === 'RETIRADA_DESPESA') {
-        totalUsed += Math.abs(amt);
-      } else if (tx.transaction_type === 'ESTORNO_REEMBOLSO') {
-        totalRefunded += Math.abs(amt);
-      }
-
-      if (tx.reservation_id) {
-        contributingResIds.add(tx.reservation_id);
-      }
-
-      const cId = tx.chacara_id || 'sem_chacara';
-      const cName = tx.chacara_name || (cId === 'sem_chacara' ? 'Geral / Não Especificada' : 'Chácara');
-      if (!chacaraMap[cId]) {
-        chacaraMap[cId] = {
-          chacara_id: cId,
-          chacara_name: cName,
-          reservations_count: 0,
-          reservations_gross_volume: 0,
-          ideal_speculated_amount: 0,
-          total_allocated: 0,
-          total_used: 0,
-          net_contribution: 0,
-          coverage_percentage: 0,
-          transactions_count: 0
-        };
-      }
-      if (amt > 0) {
-        chacaraMap[cId].total_allocated += amt;
-      } else {
-        chacaraMap[cId].total_used += Math.abs(amt);
-      }
-      chacaraMap[cId].net_contribution += amt;
-      chacaraMap[cId].transactions_count += 1;
-    });
-
-    Object.values(chacaraMap).forEach(item => {
-      item.total_allocated = Math.round(item.total_allocated * 100) / 100;
-      item.total_used = Math.round(item.total_used * 100) / 100;
-      item.net_contribution = Math.round(item.net_contribution * 100) / 100;
-      if (item.ideal_speculated_amount > 0) {
-        item.coverage_percentage = Math.min(100, Math.round((item.total_allocated / item.ideal_speculated_amount) * 100));
-      } else if (item.total_allocated > 0) {
-        item.coverage_percentage = 100;
-      }
-    });
-
-    const recentEntries = [...txs].filter(t => Number(t.amount) > 0).reverse().slice(0, 10);
-    const recentExits = [...txs].filter(t => Number(t.amount) < 0).reverse().slice(0, 10);
-
-    const idealSpeculatedAccumulated = Math.round((totalReservationsGrossVolume * (percentage / 100)) * 100) / 100;
-    const roundedCurrentBalance = Math.round(currentBalance * 100) / 100;
-    const speculatedCoveragePercentage = idealSpeculatedAccumulated > 0
-      ? Math.min(100, Math.round((roundedCurrentBalance / idealSpeculatedAccumulated) * 100))
-      : (roundedCurrentBalance > 0 ? 100 : 0);
-
-    const pendingSpeculatedBalance = Math.max(0, Math.round((idealSpeculatedAccumulated - totalAccumulated) * 100) / 100);
-
-    return {
-      fund,
-      current_balance: roundedCurrentBalance,
-      total_accumulated: Math.round(totalAccumulated * 100) / 100,
-      total_used: Math.round(totalUsed * 100) / 100,
-      total_refunded: Math.round(totalRefunded * 100) / 100,
-      contributing_reservations_count: contributingResIds.size,
-      total_reservations_count: activeReservations.length,
-      total_reservations_gross_volume: Math.round(totalReservationsGrossVolume * 100) / 100,
-      ideal_speculated_accumulated: idealSpeculatedAccumulated,
-      speculated_coverage_percentage: speculatedCoveragePercentage,
-      pending_speculated_balance: pendingSpeculatedBalance,
-      configured_percentage: percentage,
-      contributions_by_chacara: Object.values(chacaraMap).sort((a, b) => b.ideal_speculated_amount - a.ideal_speculated_amount),
-      recent_entries: recentEntries,
-      recent_exits: recentExits,
-      all_transactions: [...txs].reverse()
-    };
-  },
-
-  async allocateEmergencyFundFromPayment(
-    payment: ReservationPayment,
-    reservation?: Reservation
-  ): Promise<EmergencyFundTransaction | null> {
-    const store = getStore();
-    const fund = store.emergencyFund!;
-
-    // Idempotency check
-    const existing = (store.emergencyFundTransactions || []).find(
-      t => t.payment_id === payment.id && t.transaction_type === 'APORTE_AUTOMATICO'
-    );
-    if (existing) return existing;
-
-    const res = reservation || store.reservations.find(r => r.id === payment.reservation_id);
-    const percentage = Number(fund.default_percentage || 20);
-    const allocated = Math.round(Number(payment.amount) * (percentage / 100) * 100) / 100;
-    if (allocated <= 0) return null;
-
-    const currentTotal = (store.emergencyFundTransactions || []).reduce((acc, t) => acc + Number(t.amount || 0), 0);
-    const balanceAfter = Math.round((currentTotal + allocated) * 100) / 100;
-
-    const newTx: EmergencyFundTransaction = {
-      id: `tx-em-${payment.id}`,
-      fund_id: fund.id,
-      chacara_id: res?.chacara_id || null,
-      chacara_name: res?.chacara?.name || null,
-      reservation_id: res?.id || payment.reservation_id || null,
-      reservation_code: res?.code || null,
-      payment_id: payment.id,
-      transaction_type: 'APORTE_AUTOMATICO',
-      amount: allocated,
-      gross_amount: Number(payment.amount),
-      percentage_applied: percentage,
-      balance_after: balanceAfter,
-      category: 'RECEITA_ALUGUEL_20%',
-      description: `Aporte Automático (${percentage}%) - Reserva #${res?.code || 'N/A'}`,
-      performed_by: payment.created_by || 'Sistema',
-      notes: payment.notes || null,
-      created_at: new Date().toISOString()
-    };
-
-    store.emergencyFundTransactions = store.emergencyFundTransactions || [];
-    store.emergencyFundTransactions.push(newTx);
-    fund.current_balance = balanceAfter;
-    fund.updated_at = new Date().toISOString();
-
-    saveStore(store);
-    return newTx;
-  },
-
-  async revertEmergencyFundFromRefund(
-    refund: ReservationRefund,
-    reservation?: Reservation
-  ): Promise<EmergencyFundTransaction | null> {
-    const store = getStore();
-    const fund = store.emergencyFund!;
-
-    const existing = (store.emergencyFundTransactions || []).find(
-      t => t.refund_id === refund.id && t.transaction_type === 'ESTORNO_REEMBOLSO'
-    );
-    if (existing) return existing;
-
-    const res = reservation || store.reservations.find(r => r.id === refund.reservation_id);
-    const percentage = Number(fund.default_percentage || 20);
-    const reversal = Math.round(Number(refund.amount) * (percentage / 100) * 100) / 100;
-    if (reversal <= 0) return null;
-
-    const currentTotal = (store.emergencyFundTransactions || []).reduce((acc, t) => acc + Number(t.amount || 0), 0);
-    const balanceAfter = Math.round((currentTotal - reversal) * 100) / 100;
-
-    const newTx: EmergencyFundTransaction = {
-      id: `tx-em-ref-${refund.id}`,
-      fund_id: fund.id,
-      chacara_id: res?.chacara_id || null,
-      chacara_name: res?.chacara?.name || null,
-      reservation_id: res?.id || refund.reservation_id || null,
-      reservation_code: res?.code || null,
-      refund_id: refund.id,
-      transaction_type: 'ESTORNO_REEMBOLSO',
-      amount: -Math.abs(reversal),
-      gross_amount: Number(refund.amount),
-      percentage_applied: percentage,
-      balance_after: balanceAfter,
-      category: 'ESTORNO_CANCELAMENTO_REEMBOLSO',
-      description: `Estorno de Reembolso (${percentage}%) - Reserva #${res?.code || 'N/A'}: ${refund.reason || 'Cancelamento'}`,
-      performed_by: refund.created_by || 'Sistema',
-      notes: refund.reason || null,
-      created_at: new Date().toISOString()
-    };
-
-    store.emergencyFundTransactions = store.emergencyFundTransactions || [];
-    store.emergencyFundTransactions.push(newTx);
-    fund.current_balance = balanceAfter;
-    fund.updated_at = new Date().toISOString();
-
-    saveStore(store);
-    return newTx;
-  },
-
-  async recordEmergencyFundExpense(input: RecordExpenseInput): Promise<EmergencyFundTransaction> {
-    const store = getStore();
-    const fund = store.emergencyFund!;
-    const amount = Math.round(Number(input.amount) * 100) / 100;
-
-    const currentTotal = (store.emergencyFundTransactions || []).reduce((acc, t) => acc + Number(t.amount || 0), 0);
-    const balanceAfter = Math.round((currentTotal - amount) * 100) / 100;
-
-    const c = input.chacara_id ? store.chacaras.find(ch => ch.id === input.chacara_id) : null;
-
-    const newTx: EmergencyFundTransaction = {
-      id: `tx-em-exp-${Date.now()}`,
-      fund_id: fund.id,
-      chacara_id: input.chacara_id || null,
-      chacara_name: c?.name || null,
-      transaction_type: 'RETIRADA_DESPESA',
-      amount: -Math.abs(amount),
-      gross_amount: amount,
-      balance_after: balanceAfter,
-      category: input.category || 'INFRAESTRUTURA_EMERGENCIAL',
-      description: input.description.trim(),
-      performed_by: input.performed_by || 'Administrador',
-      notes: input.notes || null,
-      created_at: new Date().toISOString()
-    };
-
-    store.emergencyFundTransactions = store.emergencyFundTransactions || [];
-    store.emergencyFundTransactions.push(newTx);
-    fund.current_balance = balanceAfter;
-    fund.updated_at = new Date().toISOString();
-
-    saveStore(store);
-    return newTx;
-  },
-
-  async recordManualEmergencyContribution(input: RecordManualContributionInput): Promise<EmergencyFundTransaction> {
-    const store = getStore();
-    const fund = store.emergencyFund!;
-    const amount = Math.round(Number(input.amount) * 100) / 100;
-
-    const currentTotal = (store.emergencyFundTransactions || []).reduce((acc, t) => acc + Number(t.amount || 0), 0);
-    const balanceAfter = Math.round((currentTotal + amount) * 100) / 100;
-
-    const c = input.chacara_id ? store.chacaras.find(ch => ch.id === input.chacara_id) : null;
-
-    const newTx: EmergencyFundTransaction = {
-      id: `tx-em-man-${Date.now()}`,
-      fund_id: fund.id,
-      chacara_id: input.chacara_id || null,
-      chacara_name: c?.name || null,
-      transaction_type: 'APORTE_MANUAL',
-      amount: Math.abs(amount),
-      gross_amount: amount,
-      balance_after: balanceAfter,
-      category: 'APORTE_EXTRAORDINARIO',
-      description: input.description.trim(),
-      performed_by: input.performed_by || 'Administrador',
-      notes: input.notes || null,
-      created_at: new Date().toISOString()
-    };
-
-    store.emergencyFundTransactions = store.emergencyFundTransactions || [];
-    store.emergencyFundTransactions.push(newTx);
-    fund.current_balance = balanceAfter;
-    fund.updated_at = new Date().toISOString();
-
-    saveStore(store);
-    return newTx;
-  },
-
-  async recordManualEmergencyWithdrawal(input: RecordManualWithdrawalInput): Promise<EmergencyFundTransaction> {
-    const store = getStore();
-    const fund = store.emergencyFund!;
-    const amount = Math.round(Number(input.amount) * 100) / 100;
-
-    const currentTotal = (store.emergencyFundTransactions || []).reduce((acc, t) => acc + Number(t.amount || 0), 0);
-    const balanceAfter = Math.round((currentTotal - amount) * 100) / 100;
-
-    const c = input.chacara_id ? store.chacaras.find(ch => ch.id === input.chacara_id) : null;
-
-    const newTx: EmergencyFundTransaction = {
-      id: `tx-em-adj-${Date.now()}`,
-      fund_id: fund.id,
-      chacara_id: input.chacara_id || null,
-      chacara_name: c?.name || null,
-      transaction_type: 'AJUSTE_MANUAL',
-      amount: -Math.abs(amount),
-      gross_amount: amount,
-      balance_after: balanceAfter,
-      category: 'AJUSTE_RETIRADA_MANUAL',
-      description: input.description.trim(),
-      performed_by: input.performed_by || 'Administrador',
-      notes: input.notes || null,
-      created_at: new Date().toISOString()
-    };
-
-    store.emergencyFundTransactions = store.emergencyFundTransactions || [];
-    store.emergencyFundTransactions.push(newTx);
-    fund.current_balance = balanceAfter;
-    fund.updated_at = new Date().toISOString();
-
-    saveStore(store);
-    return newTx;
-  },
-
-  async updateEmergencyFundPercentage(newPercentage: number): Promise<EmergencyFund> {
-    const store = getStore();
-    const fund = store.emergencyFund!;
-    fund.default_percentage = Math.round(Number(newPercentage) * 100) / 100;
-    fund.updated_at = new Date().toISOString();
-
-    saveStore(store);
-    return fund;
   }
 };
 

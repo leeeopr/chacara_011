@@ -35,13 +35,18 @@ export async function getChacaras(filters?: { search?: string; status?: string }
 
     const { data, error } = await query;
     if (error) {
-      console.error('[chacarasService] Erro ao buscar chácaras no Supabase:', error.message);
-      return [];
+      console.warn('[chacarasService] Erro ao buscar chácaras no Supabase (usando fallback demo):', error.message);
+      return demoRepository.getChacaras(filters);
     }
-    return ((data as any[]) || []).map(normalizeChacara);
+    const list = ((data as any[]) || []).map(normalizeChacara);
+    if (list.length === 0 && !filters?.search && (!filters?.status || filters.status === 'TODOS')) {
+      const demoList = await demoRepository.getChacaras(filters);
+      return demoList;
+    }
+    return list;
   } catch (e) {
-    console.error('[chacarasService] Exceção ao buscar chácaras:', e);
-    return [];
+    console.warn('[chacarasService] Exceção ao buscar chácaras (usando fallback demo):', e);
+    return demoRepository.getChacaras(filters);
   }
 }
 
@@ -58,13 +63,13 @@ export async function getChacaraById(id: string): Promise<Chacara | null> {
       .maybeSingle();
 
     if (error) {
-      console.error('[chacarasService] Erro ao buscar chácara por ID:', error.message);
-      return null;
+      console.warn('[chacarasService] Erro ao buscar chácara por ID (usando fallback demo):', error.message);
+      return demoRepository.getChacaraById(id);
     }
-    return data ? normalizeChacara(data) : null;
+    return data ? normalizeChacara(data) : demoRepository.getChacaraById(id);
   } catch (e) {
-    console.error('[chacarasService] Exceção ao buscar chácara por ID:', e);
-    return null;
+    console.warn('[chacarasService] Exceção ao buscar chácara por ID (usando fallback demo):', e);
+    return demoRepository.getChacaraById(id);
   }
 }
 

@@ -216,7 +216,7 @@ export const ALL_ACTION_ITEMS: ActionItem[] = [
     description: 'Lançar recebimento ou sinal referente a reservas',
     iconName: 'CreditCard',
     category: 'Financeiro',
-    modules: ['financeiro', 'reserva_emergencia', 'dashboard', 'reservas', 'calendario'],
+    modules: ['financeiro', 'dashboard', 'reservas', 'calendario'],
     colorScheme: {
       bg: 'bg-emerald-500/10',
       text: 'text-emerald-400',
@@ -231,7 +231,7 @@ export const ALL_ACTION_ITEMS: ActionItem[] = [
     description: 'Lançar custo extra, avaria ou taxa operacional',
     iconName: 'TrendingDown',
     category: 'Financeiro',
-    modules: ['financeiro', 'reserva_emergencia'],
+    modules: ['financeiro'],
     colorScheme: {
       bg: 'bg-orange-500/10',
       text: 'text-orange-400',

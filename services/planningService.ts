@@ -32,6 +32,41 @@ function deriveClassification(classification?: DecisionClassification, type?: De
 }
 
 /**
+ * Normaliza linha vinda do Supabase garantindo campos estendidos via metadata
+ */
+function mapRowToDecision(row: any): PlanningDecision {
+  const meta = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const classification = row.classification || meta.classification || deriveClassification(undefined, row.decision_type);
+  const postpone_reason = row.postpone_reason || meta.postpone_reason || null;
+  const postponed_until = row.postponed_until || meta.postponed_until || null;
+  const rejection_reason = row.rejection_reason || meta.rejection_reason || null;
+
+  return {
+    id: row.id,
+    title: row.title || '',
+    classification,
+    description: row.description || '',
+    chacara_id: row.chacara_id || null,
+    decision_type: row.decision_type || 'OUTRO',
+    estimated_cost: Number(row.estimated_cost || 0),
+    target_date: row.target_date || null,
+    status: row.status || 'EM_ANALISE',
+    priority: row.priority || 'MEDIA',
+    impact_notes: row.impact_notes || null,
+    postpone_reason,
+    postponed_until,
+    rejection_reason,
+    metadata: meta,
+    created_by: row.created_by || null,
+    created_by_name: row.created_by_name || null,
+    is_deleted: Boolean(row.is_deleted),
+    created_at: row.created_at || new Date().toISOString(),
+    updated_at: row.updated_at || new Date().toISOString(),
+    chacara: row.chacara || null
+  };
+}
+
+/**
  * 1. Listar todas as Decisões de Planejamento com Filtros e Relacionamento com Chácara
  */
 export async function getPlanningDecisions(filters?: {
@@ -80,9 +115,6 @@ export async function getPlanningDecisions(filters?: {
       .eq('is_deleted', false)
       .order('created_at', { ascending: false });
 
-    if (filters?.classification && filters.classification !== 'ALL') {
-      query = query.eq('classification', filters.classification);
-    }
     if (filters?.chacara_id && filters.chacara_id !== 'ALL') {
       if (filters.chacara_id === 'GENERAL') {
         query = query.is('chacara_id', null);
@@ -107,29 +139,12 @@ export async function getPlanningDecisions(filters?: {
       return memoryDecisions.filter(d => !d.is_deleted);
     }
 
-    const formatted: PlanningDecision[] = (data || []).map((row: any) => ({
-      id: row.id,
-      title: row.title,
-      classification: row.classification || deriveClassification(undefined, row.decision_type),
-      description: row.description || '',
-      chacara_id: row.chacara_id || null,
-      decision_type: row.decision_type || 'OUTRO',
-      estimated_cost: Number(row.estimated_cost || 0),
-      target_date: row.target_date || null,
-      status: row.status || 'EM_ANALISE',
-      priority: row.priority || 'MEDIA',
-      impact_notes: row.impact_notes || null,
-      postpone_reason: row.postpone_reason || null,
-      postponed_until: row.postponed_until || null,
-      rejection_reason: row.rejection_reason || null,
-      metadata: row.metadata || {},
-      created_by: row.created_by || null,
-      created_by_name: row.created_by_name || null,
-      is_deleted: row.is_deleted || false,
-      created_at: row.created_at || new Date().toISOString(),
-      updated_at: row.updated_at || new Date().toISOString(),
-      chacara: row.chacara || null
-    }));
+    let formatted: PlanningDecision[] = (data || []).map(mapRowToDecision);
+
+    // Filtrar por classificação se necessário (garante tanto se veio da coluna quanto do metadata)
+    if (filters?.classification && filters.classification !== 'ALL') {
+      formatted = formatted.filter(d => d.classification === filters.classification);
+    }
 
     // Sincronizar cache em memória
     memoryDecisions = formatted;
@@ -162,29 +177,7 @@ export async function getPlanningDecisionById(id: string): Promise<PlanningDecis
       return memoryDecisions.find(d => d.id === id && !d.is_deleted) || null;
     }
 
-    return {
-      id: data.id,
-      title: data.title,
-      classification: data.classification || deriveClassification(undefined, data.decision_type),
-      description: data.description || '',
-      chacara_id: data.chacara_id || null,
-      decision_type: data.decision_type || 'OUTRO',
-      estimated_cost: Number(data.estimated_cost || 0),
-      target_date: data.target_date || null,
-      status: data.status || 'EM_ANALISE',
-      priority: data.priority || 'MEDIA',
-      impact_notes: data.impact_notes || null,
-      postpone_reason: data.postpone_reason || null,
-      postponed_until: data.postponed_until || null,
-      rejection_reason: data.rejection_reason || null,
-      metadata: data.metadata || {},
-      created_by: data.created_by || null,
-      created_by_name: data.created_by_name || null,
-      is_deleted: data.is_deleted || false,
-      created_at: data.created_at,
-      updated_at: data.updated_at,
-      chacara: data.chacara || null
-    };
+    return mapRowToDecision(data);
   } catch (err) {
     console.error('[planningService] Erro ao buscar decisão por ID:', err);
     return memoryDecisions.find(d => d.id === id && !d.is_deleted) || null;
@@ -211,7 +204,13 @@ export async function createPlanningDecision(input: CreateDecisionInput): Promis
     postpone_reason: input.postpone_reason?.trim() || null,
     postponed_until: input.postponed_until || null,
     rejection_reason: input.rejection_reason?.trim() || null,
-    metadata: input.metadata || {},
+    metadata: {
+      ...(input.metadata || {}),
+      classification,
+      postpone_reason: input.postpone_reason?.trim() || null,
+      postponed_until: input.postponed_until || null,
+      rejection_reason: input.rejection_reason?.trim() || null
+    },
     created_by: input.created_by || null,
     created_by_name: input.created_by_name || 'Administrador',
     is_deleted: false,
@@ -221,17 +220,20 @@ export async function createPlanningDecision(input: CreateDecisionInput): Promis
 
   // Preencher chácara localmente para retorno imediato se houver id
   if (newDecisionObj.chacara_id) {
-    const allChacaras = await getChacaras();
-    newDecisionObj.chacara = allChacaras.find(c => c.id === newDecisionObj.chacara_id) || null;
+    try {
+      const allChacaras = await getChacaras();
+      newDecisionObj.chacara = allChacaras.find(c => c.id === newDecisionObj.chacara_id) || null;
+    } catch (e) {}
   }
 
-  // Registrar histórico de criação
+  // Registrar histórico de criação na memória
   const historyItem: DecisionStatusHistory = {
     id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `hist-${Date.now()}`,
     decision_id: newDecisionObj.id,
     event_type: 'CRIACAO',
+    previous_status: 'EM_ANALISE',
     new_status: newDecisionObj.status,
-    reason: 'Decisão cadastrada no planejamento',
+    reason: `CRIACAO: Decisão cadastrada no planejamento (Classificação: ${classification === 'PROJETO_INVESTIMENTO' ? 'Projeto / Investimento' : 'Decisão Operacional'} | Custo: ${formatCurrency(newDecisionObj.estimated_cost)})`,
     details: `Classificação: ${classification === 'PROJETO_INVESTIMENTO' ? 'Projeto / Investimento' : 'Decisão Operacional'} | Custo inicial: ${formatCurrency(newDecisionObj.estimated_cost)}`,
     changed_by: newDecisionObj.created_by_name || 'Administrador',
     created_at: new Date().toISOString()
@@ -244,9 +246,9 @@ export async function createPlanningDecision(input: CreateDecisionInput): Promis
   }
 
   try {
-    const payload = {
+    // Payload estritamente compatível com a tabela planning_decisions
+    const payload: any = {
       title: newDecisionObj.title,
-      classification: newDecisionObj.classification,
       description: newDecisionObj.description,
       chacara_id: newDecisionObj.chacara_id,
       decision_type: newDecisionObj.decision_type,
@@ -255,9 +257,6 @@ export async function createPlanningDecision(input: CreateDecisionInput): Promis
       status: newDecisionObj.status,
       priority: newDecisionObj.priority,
       impact_notes: newDecisionObj.impact_notes,
-      postpone_reason: newDecisionObj.postpone_reason,
-      postponed_until: newDecisionObj.postponed_until,
-      rejection_reason: newDecisionObj.rejection_reason,
       metadata: newDecisionObj.metadata,
       created_by: newDecisionObj.created_by,
       created_by_name: newDecisionObj.created_by_name,
@@ -279,38 +278,18 @@ export async function createPlanningDecision(input: CreateDecisionInput): Promis
       return newDecisionObj;
     }
 
-    const created: PlanningDecision = {
-      id: data.id,
-      title: data.title,
-      classification: data.classification || classification,
-      description: data.description || '',
-      chacara_id: data.chacara_id || null,
-      decision_type: data.decision_type,
-      estimated_cost: Number(data.estimated_cost || 0),
-      target_date: data.target_date || null,
-      status: data.status,
-      priority: data.priority,
-      impact_notes: data.impact_notes || null,
-      postpone_reason: data.postpone_reason || null,
-      postponed_until: data.postponed_until || null,
-      rejection_reason: data.rejection_reason || null,
-      metadata: data.metadata || {},
-      created_by: data.created_by || null,
-      created_by_name: data.created_by_name || null,
-      is_deleted: data.is_deleted || false,
-      created_at: data.created_at,
-      updated_at: data.updated_at,
-      chacara: data.chacara || newDecisionObj.chacara
-    };
+    const created = mapRowToDecision(data);
+    if (!created.chacara && newDecisionObj.chacara) {
+      created.chacara = newDecisionObj.chacara;
+    }
 
     // Registrar histórico no Supabase
     try {
       await supabase.from('planning_decision_history').insert([{
         decision_id: created.id,
-        event_type: 'CRIACAO',
+        previous_status: 'EM_ANALISE',
         new_status: created.status,
-        reason: 'Decisão cadastrada no planejamento',
-        details: `Classificação: ${created.classification === 'PROJETO_INVESTIMENTO' ? 'Projeto / Investimento' : 'Decisão Operacional'} | Custo: ${formatCurrency(created.estimated_cost)}`,
+        reason: `CRIACAO: Decisão cadastrada - ${created.classification === 'PROJETO_INVESTIMENTO' ? 'Projeto / Investimento' : 'Decisão Operacional'} | Custo: ${formatCurrency(created.estimated_cost)}`,
         changed_by: created.created_by_name || 'Administrador'
       }]);
     } catch (e) {
@@ -335,31 +314,47 @@ export async function updatePlanningDecision(id: string, input: UpdateDecisionIn
   const previousCost = existing?.estimated_cost;
   const newCost = input.estimated_cost !== undefined ? Number(input.estimated_cost) : previousCost;
 
+  const currentClassification = input.classification || existing?.classification || 'OPERACIONAL';
+  const currentPostponeReason = input.postpone_reason !== undefined ? input.postpone_reason : existing?.postpone_reason;
+  const currentPostponedUntil = input.postponed_until !== undefined ? input.postponed_until : existing?.postponed_until;
+  const currentRejectionReason = input.rejection_reason !== undefined ? input.rejection_reason : existing?.rejection_reason;
+
+  const mergedMetadata = {
+    ...(existing?.metadata || {}),
+    ...(input.metadata || {}),
+    classification: currentClassification,
+    postpone_reason: currentPostponeReason,
+    postponed_until: currentPostponedUntil,
+    rejection_reason: currentRejectionReason
+  };
+
   const updatedLocal: PlanningDecision = {
     ...(existing || {}),
     id,
     title: input.title !== undefined ? input.title.trim() : (existing?.title || ''),
-    classification: input.classification || existing?.classification || 'OPERACIONAL',
-    description: input.description !== undefined ? input.description.trim() : existing?.description,
-    chacara_id: input.chacara_id !== undefined ? (input.chacara_id === 'NONE' ? null : input.chacara_id) : existing?.chacara_id,
+    classification: currentClassification,
+    description: input.description !== undefined ? input.description.trim() : (existing?.description || ''),
+    chacara_id: input.chacara_id !== undefined ? (input.chacara_id === 'NONE' ? null : input.chacara_id) : (existing?.chacara_id || null),
     decision_type: input.decision_type || existing?.decision_type || 'OUTRO',
     estimated_cost: newCost !== undefined ? Number(newCost) : 0,
-    target_date: input.target_date !== undefined ? input.target_date : existing?.target_date,
+    target_date: input.target_date !== undefined ? input.target_date : (existing?.target_date || null),
     status: input.status || existing?.status || 'EM_ANALISE',
     priority: input.priority || existing?.priority || 'MEDIA',
-    impact_notes: input.impact_notes !== undefined ? input.impact_notes : existing?.impact_notes,
-    postpone_reason: input.postpone_reason !== undefined ? input.postpone_reason : existing?.postpone_reason,
-    postponed_until: input.postponed_until !== undefined ? input.postponed_until : existing?.postponed_until,
-    rejection_reason: input.rejection_reason !== undefined ? input.rejection_reason : existing?.rejection_reason,
-    metadata: input.metadata || existing?.metadata || {},
+    impact_notes: input.impact_notes !== undefined ? input.impact_notes : (existing?.impact_notes || null),
+    postpone_reason: currentPostponeReason || null,
+    postponed_until: currentPostponedUntil || null,
+    rejection_reason: currentRejectionReason || null,
+    metadata: mergedMetadata,
     is_deleted: existing?.is_deleted || false,
     created_at: existing?.created_at || new Date().toISOString(),
     updated_at: new Date().toISOString()
   };
 
   if (updatedLocal.chacara_id) {
-    const allChacaras = await getChacaras();
-    updatedLocal.chacara = allChacaras.find(c => c.id === updatedLocal.chacara_id) || null;
+    try {
+      const allChacaras = await getChacaras();
+      updatedLocal.chacara = allChacaras.find(c => c.id === updatedLocal.chacara_id) || null;
+    } catch (e) {}
   } else {
     updatedLocal.chacara = null;
   }
@@ -370,7 +365,9 @@ export async function updatePlanningDecision(id: string, input: UpdateDecisionIn
       id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `hist-${Date.now()}`,
       decision_id: id,
       event_type: 'ALTERACAO_CUSTO',
-      reason: 'Custo estimado alterado',
+      previous_status: updatedLocal.status,
+      new_status: updatedLocal.status,
+      reason: `Custo alterado: ${formatCurrency(previousCost)} → ${formatCurrency(newCost)}`,
       details: `${formatCurrency(previousCost)} → ${formatCurrency(newCost)}`,
       changed_by: 'Administrador',
       created_at: new Date().toISOString()
@@ -380,9 +377,9 @@ export async function updatePlanningDecision(id: string, input: UpdateDecisionIn
     if (!isDemoMode() && isValidUUID(id)) {
       supabase.from('planning_decision_history').insert([{
         decision_id: id,
-        event_type: 'ALTERACAO_CUSTO',
-        reason: 'Custo estimado alterado',
-        details: `${formatCurrency(previousCost)} → ${formatCurrency(newCost)}`,
+        previous_status: updatedLocal.status,
+        new_status: updatedLocal.status,
+        reason: `Custo alterado: ${formatCurrency(previousCost)} → ${formatCurrency(newCost)}`,
         changed_by: 'Administrador'
       }]).then();
     }
@@ -398,7 +395,6 @@ export async function updatePlanningDecision(id: string, input: UpdateDecisionIn
       updated_at: new Date().toISOString()
     };
     if (input.title !== undefined) payload.title = input.title.trim();
-    if (input.classification !== undefined) payload.classification = input.classification;
     if (input.description !== undefined) payload.description = input.description.trim();
     if (input.chacara_id !== undefined) payload.chacara_id = input.chacara_id === 'NONE' ? null : input.chacara_id;
     if (input.decision_type !== undefined) payload.decision_type = input.decision_type;
@@ -407,10 +403,7 @@ export async function updatePlanningDecision(id: string, input: UpdateDecisionIn
     if (input.status !== undefined) payload.status = input.status;
     if (input.priority !== undefined) payload.priority = input.priority;
     if (input.impact_notes !== undefined) payload.impact_notes = input.impact_notes;
-    if (input.postpone_reason !== undefined) payload.postpone_reason = input.postpone_reason;
-    if (input.postponed_until !== undefined) payload.postponed_until = input.postponed_until;
-    if (input.rejection_reason !== undefined) payload.rejection_reason = input.rejection_reason;
-    if (input.metadata !== undefined) payload.metadata = input.metadata;
+    payload.metadata = mergedMetadata;
 
     const { data, error } = await supabase
       .from('planning_decisions')
@@ -428,29 +421,10 @@ export async function updatePlanningDecision(id: string, input: UpdateDecisionIn
       return updatedLocal;
     }
 
-    const updated: PlanningDecision = {
-      id: data.id,
-      title: data.title,
-      classification: data.classification || updatedLocal.classification,
-      description: data.description || '',
-      chacara_id: data.chacara_id || null,
-      decision_type: data.decision_type,
-      estimated_cost: Number(data.estimated_cost || 0),
-      target_date: data.target_date || null,
-      status: data.status,
-      priority: data.priority,
-      impact_notes: data.impact_notes || null,
-      postpone_reason: data.postpone_reason || null,
-      postponed_until: data.postponed_until || null,
-      rejection_reason: data.rejection_reason || null,
-      metadata: data.metadata || {},
-      created_by: data.created_by || null,
-      created_by_name: data.created_by_name || null,
-      is_deleted: data.is_deleted || false,
-      created_at: data.created_at,
-      updated_at: data.updated_at,
-      chacara: data.chacara || updatedLocal.chacara
-    };
+    const updated = mapRowToDecision(data);
+    if (!updated.chacara && updatedLocal.chacara) {
+      updated.chacara = updatedLocal.chacara;
+    }
 
     memoryDecisions = memoryDecisions.map(d => d.id === id ? updated : d);
     return updated;
@@ -474,7 +448,7 @@ export async function updateDecisionStatus(
   }
 ): Promise<PlanningDecision> {
   const current = memoryDecisions.find(d => d.id === id);
-  const previousStatus = current?.status;
+  const previousStatus = current?.status || 'EM_ANALISE';
   const reason = options?.reason?.trim();
   const postponed_until = options?.postponed_until || null;
   const changedBy = options?.changedBy || 'Administrador';
@@ -487,13 +461,16 @@ export async function updateDecisionStatus(
     eventType = 'RETOMADA_ANALISE';
   }
 
-  let detailsText = `Status alterado: ${previousStatus || 'Desconhecido'} → ${newStatus}`;
+  let detailsText = `${previousStatus} → ${newStatus}`;
   if (newStatus === 'ADIADA' && postponed_until) {
     const formattedReview = new Date(postponed_until + 'T00:00:00').toLocaleDateString('pt-BR');
-    detailsText += ` | Revisão prevista para: ${formattedReview}`;
+    detailsText += ` | Revisão para: ${formattedReview}`;
+  }
+  if (reason) {
+    detailsText += ` (${reason})`;
   }
 
-  // Registrar histórico
+  // Registrar histórico em memória
   const historyEntry: DecisionStatusHistory = {
     id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `hist-${Date.now()}`,
     decision_id: id,
@@ -511,11 +488,9 @@ export async function updateDecisionStatus(
     try {
       await supabase.from('planning_decision_history').insert([{
         decision_id: id,
-        event_type: eventType,
         previous_status: previousStatus,
         new_status: newStatus,
-        reason: reason || null,
-        details: detailsText,
+        reason: `${eventType}: ${detailsText}`,
         changed_by: changedBy
       }]);
     } catch (e) {
@@ -534,7 +509,7 @@ export async function updateDecisionStatus(
   } else if (newStatus === 'REJEITADA') {
     updatePayload.rejection_reason = reason || null;
   } else if (newStatus === 'EM_ANALISE') {
-    // Ao retomar a análise, preservamos ou limpamos conforme conveniência, mantendo o histórico intacto
+    // Ao retomar a análise
   }
 
   return updatePlanningDecision(id, updatePayload);
@@ -583,7 +558,7 @@ export async function getDecisionStatusHistory(decisionId: string): Promise<Deci
       .eq('decision_id', decisionId)
       .order('created_at', { ascending: false });
 
-    if (error || !data) {
+    if (error || !data || data.length === 0) {
       return memoryHistory
         .filter(h => h.decision_id === decisionId)
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -592,11 +567,11 @@ export async function getDecisionStatusHistory(decisionId: string): Promise<Deci
     const list: DecisionStatusHistory[] = data.map((row: any) => ({
       id: row.id,
       decision_id: row.decision_id,
-      event_type: row.event_type || (row.new_status ? 'MUDANCA_STATUS' : 'EDICAO_GERAL'),
+      event_type: 'MUDANCA_STATUS',
       previous_status: row.previous_status,
       new_status: row.new_status,
       reason: row.reason || undefined,
-      details: row.details || undefined,
+      details: row.reason || undefined,
       changed_by: row.changed_by || undefined,
       created_at: row.created_at
     }));
@@ -609,3 +584,4 @@ export async function getDecisionStatusHistory(decisionId: string): Promise<Deci
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 }
+

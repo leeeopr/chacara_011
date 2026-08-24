@@ -44,7 +44,6 @@ const TAB_TITLES: Record<TabType, string> = {
   planejamento: 'Planejamento & Decisões',
   contas_a_pagar: 'Contas a Pagar & Recorrências',
   financeiro: 'Módulo Financeiro',
-  reserva_emergencia: 'Reserva de Emergência & Manutenções',
   impostos: 'Gestão Fiscal & Carnê-Leão',
   configuracoes: 'Configurações do Sistema'
 };

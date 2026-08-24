@@ -1,13 +1,30 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 export function getSupabaseConfig(): { url: string; key: string } {
-  const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const envKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  let envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  let envKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (typeof window !== 'undefined') {
+    const customUrl = localStorage.getItem('custom_supabase_url');
+    const customKey = localStorage.getItem('custom_supabase_anon_key');
+    if (customUrl && customKey) {
+      envUrl = customUrl;
+      envKey = customKey;
+    }
+  }
 
   const url = typeof envUrl === 'string' && envUrl.trim() ? envUrl.trim() : 'https://placeholder.supabase.co';
   const key = typeof envKey === 'string' && envKey.trim() ? envKey.trim() : 'placeholder-anon-key';
 
   return { url, key };
+}
+
+export function isSupabaseConfigured(): boolean {
+  const { url, key } = getSupabaseConfig();
+  if (!url || !key) return false;
+  if (url.includes('placeholder') || key.includes('placeholder')) return false;
+  if (!url.startsWith('https://') && !url.startsWith('http://')) return false;
+  return true;
 }
 
 export function getSupabaseUrl(): string {

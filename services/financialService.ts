@@ -13,10 +13,10 @@ import {
   Reservation,
   getEffectiveReservationPrice
 } from '@/lib/chacaraTypes';
+import { OperationalRevenueItem, OperationalRevenuePaymentDetail } from '@/lib/accountsPayableTypes';
 import { getReservations } from './reservationsService';
 import { isDemoMode } from '@/lib/appMode';
 import { demoRepository } from '@/lib/demoRepository';
-import { allocateEmergencyFundFromPayment, revertEmergencyFundFromRefund } from './emergencyFundService';
 
 function isValidUUID(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -283,13 +283,6 @@ export async function addReservationPayment(
   // Trigger recalculation & status sync
   await getReservationFinancialSummary(reservation);
 
-  // Auto-allocate to Emergency Fund (20%)
-  try {
-    await allocateEmergencyFundFromPayment(payment, reservation);
-  } catch (e) {
-    console.warn('[financialService] Falha não impeditiva ao alocar Reserva de Emergência:', e);
-  }
-
   return payment;
 }
 
@@ -483,13 +476,6 @@ export async function addReservationRefund(
 
   await getReservationFinancialSummary(reservation);
 
-  // Revert proportional Emergency Fund allocation
-  try {
-    await revertEmergencyFundFromRefund(refund, reservation);
-  } catch (e) {
-    console.warn('[financialService] Falha não impeditiva ao estornar Reserva de Emergência:', e);
-  }
-
   return refund;
 }
 
@@ -624,6 +610,7 @@ export interface GlobalFinancialMetrics {
     reservation: Reservation;
     summary: ReservationFullFinancialSummary;
   }>;
+  revenueItems: OperationalRevenueItem[];
 }
 
 export async function getGlobalFinancialData(filters?: {
@@ -637,27 +624,65 @@ export async function getGlobalFinancialData(filters?: {
   if (isDemoMode()) {
     return demoRepository.getGlobalFinancialData(filters);
   }
+
+  const selectedChacaraId = filters?.chacaraId && filters.chacaraId !== 'TODAS' && filters.chacaraId !== 'ALL'
+    ? filters.chacaraId
+    : undefined;
+
+  // 1. Fetch reservations
   const allReservations = await getReservations({
-    chacara_id: filters?.chacaraId !== 'TODAS' ? filters?.chacaraId : undefined
+    chacara_id: selectedChacaraId !== 'GENERAL' ? selectedChacaraId : undefined
   });
 
-  let filtered = allReservations.filter(r => !r.is_deleted);
+  let activeReservations = allReservations.filter(r => !r.is_deleted);
 
   if (filters?.clientId) {
-    filtered = filtered.filter(r => r.client_id === filters.clientId);
+    activeReservations = activeReservations.filter(r => r.client_id === filters.clientId);
   }
 
-  if (filters?.startDate) {
-    filtered = filtered.filter(r => r.checkin_date >= filters.startDate!);
+  // 2. Fetch all payment documents for cross-referencing proof of payments
+  let allPaymentDocs: any[] = [];
+  try {
+    const { data: docsData } = await supabase
+      .from('reservation_payment_documents')
+      .select('*')
+      .order('payment_date', { ascending: false });
+    if (docsData) allPaymentDocs = docsData;
+  } catch (docErr) {
+    console.warn('[financialService] Aviso ao carregar comprovantes de pagamento:', docErr);
   }
 
-  if (filters?.endDate) {
-    filtered = filtered.filter(r => r.checkin_date <= filters.endDate!);
+  const docsByReservation = new Map<string, any[]>();
+  for (const doc of allPaymentDocs) {
+    if (!doc.reservation_id) continue;
+    const list = docsByReservation.get(doc.reservation_id) || [];
+    list.push(doc);
+    docsByReservation.set(doc.reservation_id, list);
+  }
+
+  // 3. Fetch financial transactions of type RECEITA for non-reservation / direct revenues
+  let directRevenues: any[] = [];
+  try {
+    let query = supabase
+      .from('financial_transactions')
+      .select('*')
+      .eq('transaction_type', 'RECEITA')
+      .eq('status', 'PAGO');
+
+    if (selectedChacaraId && selectedChacaraId !== 'GENERAL') {
+      query = query.eq('chacara_id', selectedChacaraId);
+    } else if (selectedChacaraId === 'GENERAL') {
+      query = query.is('chacara_id', null);
+    }
+
+    const { data: transData } = await query;
+    if (transData) directRevenues = transData;
+  } catch (transErr) {
+    console.warn('[financialService] Aviso ao carregar transações financeiras de receita:', transErr);
   }
 
   let receitaPrevista = 0;
   let receitaRecebida = 0;
-  let receitaPendente = 0;
   let caucoesEmAberto = 0;
   let totalReembolsos = 0;
   let totalCanceladas = 0;
@@ -667,13 +692,86 @@ export async function getGlobalFinancialData(filters?: {
   const receitaPorOrigem: Record<string, { total: number; count: number }> = {};
 
   const itemsList: Array<{ reservation: Reservation; summary: ReservationFullFinancialSummary }> = [];
+  const revenueItems: OperationalRevenueItem[] = [];
 
-  for (const res of filtered) {
+  const startDateFilter = filters?.startDate || '';
+  const endDateFilter = filters?.endDate || '';
+
+  // Track processed reservation IDs to prevent double counting with transactions
+  const processedReservationIds = new Set<string>();
+
+  for (const res of activeReservations) {
+    processedReservationIds.add(res.id);
+
     if (res.status === 'CANCELADA') {
       totalCanceladas++;
     }
 
     const summary = await getReservationFinancialSummary(res);
+    const attachedDocs = docsByReservation.get(res.id) || [];
+
+    // SINGLE SOURCE OF TRUTH:
+    // If payments are already registered in reservation_payments, they are authoritative.
+    // We ONLY use attached fiscal documents (comprovantes) as fallback payment entries
+    // if the reservation has NO registered payments in reservation_payments table at all.
+    // This strictly prevents double-counting (e.g. R$ 420 from payment + R$ 420 from document = R$ 840).
+    if (summary.payments.length === 0 && attachedDocs.length > 0) {
+      for (const doc of attachedDocs) {
+        const docAmount = Number(doc.amount || 0);
+        if (docAmount > 0) {
+          const docDate = doc.payment_date 
+            ? doc.payment_date.split('T')[0] 
+            : (doc.uploaded_at ? doc.uploaded_at.split('T')[0] : res.checkin_date);
+          const synPayment: ReservationPayment = {
+            id: doc.id,
+            reservation_id: res.id,
+            amount: docAmount,
+            payment_date: docDate,
+            payment_method: 'OUTRO' as PaymentMethod,
+            notes: doc.description || doc.observacoes || 'Comprovante fiscal anexado',
+            created_by: doc.uploaded_by || 'Comprovante'
+          };
+          summary.payments.push(synPayment);
+        }
+      }
+      summary.total_received = summary.payments.reduce((acc, p) => acc + Number(p.amount || 0), 0);
+      summary.net_balance = Math.max(0, (summary.total_contracted + summary.total_expenses) - summary.total_received);
+    }
+
+    // Filter payments in the selected period strictly by normalized payment_date (YYYY-MM-DD)
+    let periodPayments = summary.payments;
+    if (startDateFilter || endDateFilter) {
+      periodPayments = summary.payments.filter(p => {
+        const pDate = p.payment_date ? p.payment_date.split('T')[0] : '';
+        if (!pDate) return false;
+        if (startDateFilter && pDate < startDateFilter) return false;
+        if (endDateFilter && pDate > endDateFilter) return false;
+        return true;
+      });
+    }
+
+    // Apply method filter if requested
+    if (filters?.paymentMethod && filters.paymentMethod !== 'TODAS') {
+      periodPayments = periodPayments.filter(p => p.payment_method === filters.paymentMethod);
+    }
+
+    const periodReceived = periodPayments.reduce((acc, p) => acc + Number(p.amount || 0), 0);
+    summary.period_received = periodReceived;
+    summary.period_payments = periodPayments;
+
+    // Check whether the reservation belongs to the selected view:
+    // A reservation is included in itemsList if:
+    // 1. Its checkin date falls within the period, OR
+    // 2. It had payments received within the period, OR
+    // 3. No date filter was specified.
+    const isCheckinInPeriod = (!startDateFilter || res.checkin_date >= startDateFilter) &&
+                              (!endDateFilter || res.checkin_date <= endDateFilter);
+    const hasPaymentsInPeriod = periodReceived > 0;
+    const shouldIncludeInView = !startDateFilter || isCheckinInPeriod || hasPaymentsInPeriod;
+
+    if (!shouldIncludeInView) {
+      continue;
+    }
 
     if (filters?.financialStatus && filters.financialStatus !== 'TODOS') {
       if (summary.financial_status !== filters.financialStatus) {
@@ -681,55 +779,175 @@ export async function getGlobalFinancialData(filters?: {
       }
     }
 
-    if (filters?.paymentMethod && filters.paymentMethod !== 'TODAS') {
-      const hasMethod = summary.payments.some(p => p.payment_method === filters.paymentMethod);
-      if (!hasMethod) {
-        continue;
-      }
-    }
-
     itemsList.push({ reservation: res, summary });
 
+    // Calculate revenue metrics
+    receitaRecebida += periodReceived;
+
     if (res.status !== 'CANCELADA') {
-      receitaPrevista += summary.total_contracted + summary.total_expenses;
-      receitaRecebida += summary.total_received;
-      receitaPendente += Math.max(0, summary.net_balance);
-      totalReembolsos += summary.total_refunds;
+      if (isCheckinInPeriod) {
+        receitaPrevista += (summary.total_contracted + summary.total_expenses);
+      } else if (hasPaymentsInPeriod) {
+        // If check-in is in a different month, the expected revenue for this payment is at least the received amount
+        receitaPrevista += periodReceived;
+      }
 
       if (summary.deposit.status === 'PREVISTO' || summary.deposit.status === 'RECEBIDO') {
         caucoesEmAberto += Number(summary.deposit.expected_amount || 0);
       }
 
-      // Calculation of nights
-      const start = new Date(res.checkin_date).getTime();
-      const end = new Date(res.checkout_date).getTime();
-      const nights = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
-      totalNights += nights;
+      // Calculation of nights (if check-in is in period)
+      if (isCheckinInPeriod) {
+        const start = new Date(res.checkin_date).getTime();
+        const end = new Date(res.checkout_date).getTime();
+        const nights = Math.max(1, Math.round((end - start) / (1000 * 60 * 60 * 24)));
+        totalNights += nights;
+      }
 
-      // Grouping by Chacara
+      // Grouping by Chacara by received amount in period
       const cName = res.chacara?.name || 'Chácara Não Especificada';
       if (!receitaPorChacara[cName]) {
         receitaPorChacara[cName] = { chacaraName: cName, total: 0, count: 0 };
       }
-      receitaPorChacara[cName].total += summary.total_received;
-      receitaPorChacara[cName].count += 1;
+      receitaPorChacara[cName].total += periodReceived;
+      if (isCheckinInPeriod || hasPaymentsInPeriod) {
+        receitaPorChacara[cName].count += 1;
+      }
 
       // Grouping by Origin
       const orig = res.origin || 'OUTRO';
       if (!receitaPorOrigem[orig]) {
         receitaPorOrigem[orig] = { total: 0, count: 0 };
       }
-      receitaPorOrigem[orig].total += summary.total_received;
-      receitaPorOrigem[orig].count += 1;
+      receitaPorOrigem[orig].total += periodReceived;
+      if (isCheckinInPeriod || hasPaymentsInPeriod) {
+        receitaPorOrigem[orig].count += 1;
+      }
+    }
+
+    // Refunds filtering
+    if (summary.total_refunds > 0) {
+      let refundsInPeriod = summary.refunds;
+      if (startDateFilter || endDateFilter) {
+        refundsInPeriod = summary.refunds.filter(r => {
+          const rDate = r.refund_date;
+          if (!rDate) return false;
+          if (startDateFilter && rDate < startDateFilter) return false;
+          if (endDateFilter && rDate > endDateFilter) return false;
+          return true;
+        });
+      }
+      totalReembolsos += refundsInPeriod.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+    }
+
+    // Create OperationalRevenueItem for MonthlyRevenuesSection / AccountsPayable
+    if (periodReceived > 0 || isCheckinInPeriod) {
+      const guestName = res.client?.full_name || (res as any).client_name || (res as any).guest_name || 'Hóspede Direto';
+      const title = res.code || res.chacara?.name || 'Hospedagem';
+
+      const paymentDetails: OperationalRevenuePaymentDetail[] = periodPayments.map(p => {
+        const cleanPDate = p.payment_date ? p.payment_date.split('T')[0] : '';
+        const matchingDoc = attachedDocs.find(d => {
+          const dDate = d.payment_date ? d.payment_date.split('T')[0] : '';
+          return (d.payment_id && d.payment_id === p.id) ||
+                 (dDate && cleanPDate && dDate === cleanPDate && Math.abs(Number(d.amount || 0) - Number(p.amount || 0)) < 0.01);
+        }) || (attachedDocs.length === 1 ? attachedDocs[0] : undefined);
+
+        return {
+          id: p.id,
+          amount: Number(p.amount || 0),
+          payment_date: cleanPDate || res.checkin_date,
+          payment_method: p.payment_method,
+          notes: p.notes,
+          receipt_url: matchingDoc?.public_url || (p as any).receipt_url,
+          is_proven: !!matchingDoc || !!(p as any).receipt_url || !!p.id
+        };
+      });
+
+      revenueItems.push({
+        id: res.id,
+        reservation_id: res.id,
+        guest_name: guestName,
+        descricao: `Reserva ${title}`,
+        valor_total: summary.total_contracted + summary.total_expenses,
+        valor_recebido: periodReceived,
+        valor_total_recebido: summary.total_received,
+        valor_pendente: Math.max(0, summary.net_balance),
+        data_referencia: periodPayments[0]?.payment_date || res.checkin_date,
+        data_checkout: res.checkout_date,
+        chacara_id: res.chacara_id,
+        chacara_nome: res.chacara?.name || 'Chácara Vinculada',
+        origem: res.origin || 'Direto',
+        status: summary.financial_status || 'EM_ABERTO',
+        payments_count: periodPayments.length,
+        payments_detail: paymentDetails,
+        has_receipt_document: attachedDocs.length > 0,
+        is_avulsa: false
+      });
     }
   }
 
-  const activeReservationsCount = filtered.length - totalCanceladas;
+  // 4. Process non-reservation / direct revenues from financial_transactions (anti-double-counting)
+  for (const trans of directRevenues) {
+    if (trans.reservation_id && processedReservationIds.has(trans.reservation_id)) {
+      // Already accounted for through reservation payments! Skip to avoid double counting.
+      continue;
+    }
+
+    const tDate = trans.paid_date || trans.due_date || (trans.created_at ? trans.created_at.split('T')[0] : '');
+    if (startDateFilter && tDate < startDateFilter) continue;
+    if (endDateFilter && tDate > endDateFilter) continue;
+
+    const val = Number(trans.amount || 0);
+    if (val <= 0) continue;
+
+    receitaRecebida += val;
+    receitaPrevista += val;
+
+    const cName = trans.chacara?.name || 'Receitas Diversas';
+    if (!receitaPorChacara[cName]) {
+      receitaPorChacara[cName] = { chacaraName: cName, total: 0, count: 0 };
+    }
+    receitaPorChacara[cName].total += val;
+    receitaPorChacara[cName].count += 1;
+
+    revenueItems.push({
+      id: trans.id,
+      reservation_id: trans.id,
+      guest_name: trans.description || 'Receita Direta / Avulsa',
+      descricao: `Receita Avulsa: ${trans.category || trans.description}`,
+      valor_total: val,
+      valor_recebido: val,
+      valor_total_recebido: val,
+      valor_pendente: 0,
+      data_referencia: tDate,
+      chacara_id: trans.chacara_id,
+      chacara_nome: cName,
+      origem: trans.payment_method || 'AVULSO',
+      status: 'PAGO',
+      payments_count: 1,
+      payments_detail: [{
+        id: trans.id,
+        amount: val,
+        payment_date: tDate,
+        payment_method: trans.payment_method,
+        notes: trans.notes || trans.description,
+        is_proven: true
+      }],
+      has_receipt_document: false,
+      is_avulsa: true
+    });
+  }
+
+  // Sort revenue items by payment / reference date descending
+  revenueItems.sort((a, b) => (b.data_referencia || '').localeCompare(a.data_referencia || ''));
+
+  const receitaPendente = Math.max(0, receitaPrevista - receitaRecebida);
+  const activeReservationsCount = itemsList.filter(i => i.reservation.status !== 'CANCELADA').length;
   const ticketMedio = activeReservationsCount > 0 ? receitaPrevista / activeReservationsCount : 0;
   const tempoMedioHospedagem = activeReservationsCount > 0 ? totalNights / activeReservationsCount : 0;
   const valorMedioDiaria = totalNights > 0 ? receitaPrevista / totalNights : 0;
 
-  // Approximate occupancy rate calculation (assuming 30 days active base per chacara)
   const totalDaysAvailable = Math.max(30, (receitaPorChacara ? Object.keys(receitaPorChacara).length : 1) * 30);
   const taxaOcupacao = Math.min(100, Math.round((totalNights / totalDaysAvailable) * 100));
 
@@ -739,7 +957,7 @@ export async function getGlobalFinancialData(filters?: {
     receitaPendente,
     caucoesEmAberto,
     totalReembolsos,
-    totalReservas: filtered.length,
+    totalReservas: itemsList.length,
     totalCanceladas,
     taxaOcupacao,
     ticketMedio,
@@ -747,6 +965,7 @@ export async function getGlobalFinancialData(filters?: {
     valorMedioDiaria,
     receitaPorChacara,
     receitaPorOrigem,
-    itemsList
+    itemsList,
+    revenueItems
   };
 }

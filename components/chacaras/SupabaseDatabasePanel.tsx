@@ -279,7 +279,7 @@ export default function SupabaseDatabasePanel() {
               'pricing_audit_logs', 'clients', 'reservations', 'reservation_guests',
               'reservation_status_history', 'reservation_charges', 'reservation_payments',
               'reservation_deposits', 'reservation_expenses', 'reservation_refunds',
-              'financial_audit_logs', 'emergency_funds (20%)', 'emergency_fund_transactions',
+              'financial_audit_logs',
               'reservation_payment_documents (Carnê-Leão)', 'crew_roles', 'crew_members',
               'crew_member_roles', 'property_crew', 'operational_event_types',
               'operational_recurrence_rules', 'operational_events', 'staff_unavailability',
@@ -358,29 +358,6 @@ CREATE TABLE IF NOT EXISTS public.chacaras (
   cleaning_fee NUMERIC(12,2) NOT NULL DEFAULT 0.00,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- Reserva de Emergência (20%)
-CREATE TABLE IF NOT EXISTS public.emergency_funds (
-  id UUID PRIMARY KEY DEFAULT '00000000-0000-0000-0000-000000000001'::uuid,
-  name TEXT NOT NULL DEFAULT 'Reserva de Emergência',
-  default_percentage NUMERIC(5,2) NOT NULL DEFAULT 20.00,
-  current_balance NUMERIC(12,2) NOT NULL DEFAULT 0.00,
-  status TEXT NOT NULL DEFAULT 'ATIVO'
-);
-
--- Transações e Extrato Contábil da Reserva
-CREATE TABLE IF NOT EXISTS public.emergency_fund_transactions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  fund_id UUID NOT NULL REFERENCES public.emergency_funds(id) ON DELETE CASCADE,
-  chacara_id UUID REFERENCES public.chacaras(id) ON DELETE SET NULL,
-  reservation_id UUID REFERENCES public.reservations(id) ON DELETE SET NULL,
-  transaction_type TEXT NOT NULL,
-  amount NUMERIC(12,2) NOT NULL,
-  balance_after NUMERIC(12,2) NOT NULL DEFAULT 0.00,
-  category TEXT NOT NULL DEFAULT 'RECEITA_ALUGUEL_20%',
-  description TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- [... Clique em 'Copiar SQL Completo' para copiar todas as 36 tabelas + RLS + Storage ...]`;
@@ -710,38 +687,6 @@ CREATE TABLE IF NOT EXISTS public.financial_audit_logs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS public.emergency_funds (
-  id UUID PRIMARY KEY DEFAULT '00000000-0000-0000-0000-000000000001'::uuid,
-  name TEXT NOT NULL DEFAULT 'Reserva de Emergência',
-  description TEXT NOT NULL DEFAULT 'Fundo destinado exclusivamente a despesas inesperadas, danos estruturais, manutenções emergenciais e reparos na infraestrutura das chácaras.',
-  default_percentage NUMERIC(5,2) NOT NULL DEFAULT 20.00,
-  current_balance NUMERIC(12,2) NOT NULL DEFAULT 0.00,
-  status TEXT NOT NULL DEFAULT 'ATIVO',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS public.emergency_fund_transactions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  fund_id UUID NOT NULL REFERENCES public.emergency_funds(id) ON DELETE CASCADE,
-  chacara_id UUID REFERENCES public.chacaras(id) ON DELETE SET NULL,
-  chacara_name TEXT,
-  reservation_id UUID REFERENCES public.reservations(id) ON DELETE SET NULL,
-  reservation_code TEXT,
-  payment_id UUID REFERENCES public.reservation_payments(id) ON DELETE SET NULL,
-  refund_id UUID REFERENCES public.reservation_refunds(id) ON DELETE SET NULL,
-  transaction_type TEXT NOT NULL,
-  amount NUMERIC(12,2) NOT NULL,
-  gross_amount NUMERIC(12,2),
-  percentage_applied NUMERIC(5,2),
-  balance_after NUMERIC(12,2) NOT NULL DEFAULT 0.00,
-  category TEXT NOT NULL DEFAULT 'RECEITA_ALUGUEL_20%',
-  description TEXT NOT NULL,
-  performed_by TEXT,
-  notes TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 CREATE TABLE IF NOT EXISTS public.reservation_payment_documents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   reservation_id UUID NOT NULL REFERENCES public.reservations(id) ON DELETE CASCADE,
@@ -994,6 +939,27 @@ CREATE TABLE IF NOT EXISTS public.house_purchases (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.planning_processes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  description TEXT,
+  chacara_id UUID REFERENCES public.chacaras(id) ON DELETE SET NULL,
+  process_type TEXT NOT NULL DEFAULT 'OUTRO',
+  estimated_cost NUMERIC(12,2) NOT NULL DEFAULT 0.00,
+  payment_method TEXT NOT NULL DEFAULT 'A_VISTA',
+  start_date DATE,
+  target_date DATE,
+  priority TEXT NOT NULL DEFAULT 'MEDIA',
+  status TEXT NOT NULL DEFAULT 'EM_ANALISE',
+  notes TEXT,
+  responsible_name TEXT,
+  metadata JSONB DEFAULT '{}'::jsonb,
+  is_deleted BOOLEAN NOT NULL DEFAULT false,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS public.purchase_images (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   purchase_id UUID NOT NULL REFERENCES public.house_purchases(id) ON DELETE CASCADE,
@@ -1046,12 +1012,6 @@ END $$;
 
 DO $$
 BEGIN
-  CREATE TRIGGER trg_emergency_funds_updated_at BEFORE UPDATE ON public.emergency_funds FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
-EXCEPTION WHEN others THEN NULL;
-END $$;
-
-DO $$
-BEGIN
   CREATE TRIGGER trg_crew_members_updated_at BEFORE UPDATE ON public.crew_members FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 EXCEPTION WHEN others THEN NULL;
 END $$;
@@ -1084,10 +1044,6 @@ CREATE INDEX IF NOT EXISTS idx_reservations_code ON public.reservations(code);
 CREATE INDEX IF NOT EXISTS idx_payments_reservation ON public.reservation_payments(reservation_id);
 CREATE INDEX IF NOT EXISTS idx_payments_date ON public.reservation_payments(payment_date);
 
-CREATE INDEX IF NOT EXISTS idx_emergency_tx_fund ON public.emergency_fund_transactions(fund_id);
-CREATE INDEX IF NOT EXISTS idx_emergency_tx_chacara ON public.emergency_fund_transactions(chacara_id);
-CREATE INDEX IF NOT EXISTS idx_emergency_tx_created ON public.emergency_fund_transactions(created_at);
-
 CREATE INDEX IF NOT EXISTS idx_fiscal_docs_res ON public.reservation_payment_documents(reservation_id);
 CREATE INDEX IF NOT EXISTS idx_fiscal_docs_comp ON public.reservation_payment_documents(competencia);
 
@@ -1118,8 +1074,6 @@ ALTER TABLE public.reservation_deposits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reservation_expenses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reservation_refunds ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.financial_audit_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.emergency_funds ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.emergency_fund_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reservation_payment_documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.crew_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.crew_members ENABLE ROW LEVEL SECURITY;
@@ -1137,6 +1091,7 @@ ALTER TABLE public.pendencias_historico ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pendencias_notificacoes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.house_purchases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.purchase_images ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.planning_processes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.google_calendar_integrations ENABLE ROW LEVEL SECURITY;
 
 DO $$
@@ -1147,13 +1102,14 @@ DECLARE
     'chacara_pricing_rules', 'pricing_audit_logs', 'clients', 'reservations',
     'reservation_guests', 'reservation_status_history', 'reservation_charges',
     'reservation_payments', 'reservation_deposits', 'reservation_expenses',
-    'reservation_refunds', 'financial_audit_logs', 'emergency_funds',
-    'emergency_fund_transactions', 'reservation_payment_documents',
+    'reservation_refunds', 'financial_audit_logs',
+    'reservation_payment_documents',
     'crew_roles', 'crew_members', 'crew_member_roles', 'property_crew',
     'crew_audit_logs', 'operational_event_types', 'operational_recurrence_rules',
     'operational_events', 'staff_unavailability', 'pendencias_grupos',
     'pendencias', 'pendencias_subitens', 'pendencias_historico',
     'pendencias_notificacoes', 'house_purchases', 'purchase_images',
+    'planning_processes',
     'google_calendar_integrations'
   ];
 BEGIN
@@ -1177,16 +1133,6 @@ CREATE POLICY "Acesso Publico Comprovantes" ON storage.objects
   WITH CHECK (bucket_id IN ('comprovantes_fiscais', 'chacara_photos', 'purchase_images'));
 
 -- DADOS INICIAIS
-INSERT INTO public.emergency_funds (id, name, description, default_percentage, current_balance, status)
-VALUES (
-  '00000000-0000-0000-0000-000000000001',
-  'Reserva de Emergência',
-  'Fundo destinado exclusivamente a despesas inesperadas, danos estruturais, manutenções emergenciais e reparos na infraestrutura das chácaras.',
-  20.00,
-  0.00,
-  'ATIVO'
-) ON CONFLICT (id) DO UPDATE SET default_percentage = 20.00;
-
 INSERT INTO public.operational_event_types (id, code, name, color, icon, priority, is_system)
 VALUES
   ('00000000-0000-0000-0001-000000000001', 'reserva', 'Reserva Confirmada', '#10B981', 'CalendarCheck', 1, true),

@@ -81,6 +81,8 @@ export interface FinancialProjectionSummary {
   // Caixa Base & Segregações Hoje
   caixaBrutoEmConta: number;
   reservaEmergenciaAtual: number;
+  reservaEmergenciaProjetada?: number;
+  reservaTotalPotencial?: number;
   caucoesAtuais: number;
   caixaOperacionalLivreHoje: number;
 

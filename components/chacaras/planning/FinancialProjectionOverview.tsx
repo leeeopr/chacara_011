@@ -242,23 +242,23 @@ export default function FinancialProjectionOverview({
             </div>
           </div>
 
-          {/* Card 2: Reserva de Emergência */}
+          {/* Card 2: Reserva de Emergência Atual & Projetada */}
           <div className="bg-[#0F1738] border border-emerald-500/30 rounded-2xl p-4.5 flex flex-col justify-between relative group hover:border-emerald-500/50 transition-all">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
                 <ShieldCheck size={14} />
-                <span>Reserva de Emergência</span>
+                <span>Reserva Atual (Caixa)</span>
               </span>
               <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
                 <Lock size={13} />
               </div>
             </div>
             <div className="mt-4">
-              <span className="text-2xl font-black text-emerald-300 tracking-tight block">
+              <span className="text-2xl font-black text-emerald-300 tracking-tight block font-mono">
                 {formatCurrency(projection.reservaEmergenciaAtual)}
               </span>
-              <span className="text-[11px] text-emerald-400/60 mt-1 block">
-                Saldo protegido & blindado
+              <span className="text-[11px] text-cyan-300/80 mt-1 block">
+                + {formatCurrency(projection.reservaEmergenciaProjetada || 0)} Projetada (a receber)
               </span>
             </div>
           </div>

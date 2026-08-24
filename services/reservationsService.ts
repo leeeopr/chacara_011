@@ -58,11 +58,15 @@ export async function getReservations(filters?: {
 
     const { data, error } = await query;
     if (error) {
-      console.error('[reservationsService] Erro ao buscar reservas no Supabase:', error.message);
-      return [];
+      console.warn('[reservationsService] Erro ao buscar reservas no Supabase (usando fallback demo):', error.message);
+      return demoRepository.getReservations(filters);
     }
 
     let result = (data as Reservation[]) || [];
+    if (result.length === 0 && !filters?.search && (!filters?.status || filters.status === 'TODOS') && !filters?.chacara_id && !filters?.client_id) {
+      const demoList = await demoRepository.getReservations(filters);
+      return demoList;
+    }
 
     // Populamento de segurança se chacara/client não forem retornados via join
     for (let i = 0; i < result.length; i++) {
@@ -85,8 +89,8 @@ export async function getReservations(filters?: {
 
     return result.sort((a, b) => (a.checkin_date || '').localeCompare(b.checkin_date || ''));
   } catch (err) {
-    console.error('[reservationsService] Exceção ao buscar reservas:', err);
-    return [];
+    console.warn('[reservationsService] Exceção ao buscar reservas (usando fallback demo):', err);
+    return demoRepository.getReservations(filters);
   }
 }
 
@@ -103,8 +107,8 @@ export async function getReservationById(id: string): Promise<Reservation | null
       .maybeSingle();
 
     if (error) {
-      console.error('[reservationsService] Erro ao buscar reserva por ID:', error.message);
-      return null;
+      console.warn('[reservationsService] Erro ao buscar reserva por ID (usando fallback demo):', error.message);
+      return demoRepository.getReservationById(id);
     }
 
     let res = data as Reservation | null;
@@ -123,12 +127,12 @@ export async function getReservationById(id: string): Promise<Reservation | null
           res.is_custom_price = res.financial_summary.is_custom_price;
         }
       }
+      return res;
     }
-
-    return res;
-  } catch (e) {
-    console.error('[reservationsService] Exceção em getReservationById:', e);
-    return null;
+    return demoRepository.getReservationById(id);
+  } catch (err) {
+    console.warn('[reservationsService] Exceção ao buscar reserva por ID (usando fallback demo):', err);
+    return demoRepository.getReservationById(id);
   }
 }
 

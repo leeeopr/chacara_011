@@ -186,32 +186,7 @@ export default function AccountsPayableManagement() {
 
         setReceitaRecebida(financialData.receitaRecebida || 0);
         setReceitaPrevista(financialData.receitaPrevista || 0);
-
-        // Map itemsList to OperationalRevenueItem
-        const revItems: OperationalRevenueItem[] = (financialData.itemsList || []).map(item => {
-          const res = item.reservation as any;
-          const guestName = res.client?.full_name || res.client_name || res.guest_name || 'Hóspede Direto';
-          const title = res.code || res.chacara?.name || 'Hospedagem';
-
-          return {
-            id: res.id,
-            reservation_id: res.id,
-            guest_name: guestName,
-            descricao: `Reserva ${title}`,
-            valor_total: item.summary.total_contracted + item.summary.total_expenses,
-            valor_recebido: item.summary.total_received,
-            valor_pendente: Math.max(0, item.summary.net_balance),
-            data_referencia: res.checkin_date,
-            data_checkout: res.checkout_date,
-            chacara_id: res.chacara_id,
-            chacara_nome: res.chacara?.name || 'Chácara Vinculada',
-            origem: res.origin || 'Direto',
-            status: item.summary.financial_status || 'EM_ABERTO',
-            payments_count: item.summary.payments.length
-          };
-        });
-
-        setRevenueItems(revItems);
+        setRevenueItems(financialData.revenueItems || []);
       } catch (finErr) {
         console.warn('[AccountsPayableManagement] Aviso ao buscar receitas globais:', finErr);
       }

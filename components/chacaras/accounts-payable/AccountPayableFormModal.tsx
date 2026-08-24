@@ -13,14 +13,16 @@ import {
   AlertCircle,
   Clock,
   Sparkles,
-  Info
+  Info,
+  CheckCircle2
 } from 'lucide-react';
 import { 
   AccountPayable, 
   AccountPayableCategory, 
   AccountPayableType, 
   RecurrenceFrequency, 
-  CreateAccountPayableInput, 
+  CreateAccountPayableInput,
+  UpdateAccountPayableInput,
   ACCOUNT_PAYABLE_CATEGORIES 
 } from '@/lib/accountsPayableTypes';
 import { Chacara, CrewMember } from '@/lib/chacaraTypes';
@@ -108,7 +110,13 @@ export default function AccountPayableFormModal({
       setRecorrenciaDia(effectiveData.recorrencia_dia_vencimento || 10);
       setDataVencimento(effectiveData.data_vencimento || '');
       setValorPrevisto(effectiveData.valor_previsto ? String(effectiveData.valor_previsto) : '');
-      setValorReal(effectiveData.valor_real !== undefined && effectiveData.valor_real !== null ? String(effectiveData.valor_real) : '');
+      setValorReal(
+        effectiveData.valor_real !== undefined && effectiveData.valor_real !== null 
+          ? String(effectiveData.valor_real) 
+          : (effectiveData.valor_pago !== undefined && effectiveData.valor_pago !== null 
+              ? String(effectiveData.valor_pago) 
+              : '')
+      );
       setPrestadorId(effectiveData.prestador_id || '');
       setPrestadorNome(effectiveData.prestador_nome || '');
       setPrestadorPix(effectiveData.prestador_pix || '');
@@ -207,7 +215,21 @@ export default function AccountPayableFormModal({
       };
 
       if (effectiveData?.id) {
-        await updateAccountPayable(effectiveData.id, payload);
+        const updatePayload: UpdateAccountPayableInput = {
+          ...payload,
+          status: effectiveData.status,
+          data_pagamento: effectiveData.data_pagamento,
+          responsavel_pagamento: effectiveData.responsavel_pagamento,
+          origem_tipo: effectiveData.origem_tipo,
+          origem_id: effectiveData.origem_id,
+          origem_titulo: effectiveData.origem_titulo,
+          origem_data_servico: effectiveData.origem_data_servico,
+          provider_billing_rule_id: effectiveData.provider_billing_rule_id,
+          valor_pago: effectiveData.status === 'PAGA'
+            ? (valorRealNum !== null ? valorRealNum : valorPrevistoNum)
+            : (effectiveData.valor_pago ?? null)
+        };
+        await updateAccountPayable(effectiveData.id, updatePayload);
       } else {
         await createAccountPayable(payload);
       }
@@ -238,7 +260,7 @@ export default function AccountPayableFormModal({
             </div>
             <div>
               <h2 className="text-xl font-black text-white tracking-tight">
-                {initialData ? 'Editar Conta a Pagar' : 'Cadastrar Conta a Pagar'}
+                {effectiveData ? 'Editar Conta a Pagar' : 'Cadastrar Conta a Pagar'}
               </h2>
               <p className="text-xs text-white/50">
                 Obrigação financeira, concessionária, prestador ou manutenção
@@ -247,7 +269,7 @@ export default function AccountPayableFormModal({
           </div>
           <button
             onClick={onClose}
-            className="p-2 text-white/50 hover:text-white rounded-lg hover:bg-white/5 transition-colors"
+            className="p-2 text-white/50 hover:text-white rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
           >
             <X size={20} />
           </button>
@@ -259,6 +281,15 @@ export default function AccountPayableFormModal({
             <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-start gap-3 text-rose-300 text-sm">
               <AlertCircle size={18} className="shrink-0 mt-0.5" />
               <span>{error}</span>
+            </div>
+          )}
+
+          {effectiveData?.status === 'PAGA' && (
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl flex items-center gap-2.5 text-emerald-300 text-xs">
+              <CheckCircle2 size={16} className="shrink-0 text-emerald-400" />
+              <div>
+                <span className="font-bold">Conta Paga / Liquidada:</span> Qualquer alteração no valor ou nos dados será salva e persistida imediatamente no banco de dados.
+              </div>
             </div>
           )}
 

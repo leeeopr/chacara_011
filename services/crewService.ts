@@ -99,8 +99,8 @@ export async function getCrewRoles(includeInactive = true): Promise<CrewRole[]> 
   try {
     const { data, error } = await supabase.from('crew_roles').select('*');
     if (error) {
-      console.error('[crewService] Erro ao buscar funções da equipe:', error.message);
-      return [];
+      console.warn('[crewService] Erro ao buscar funções da equipe (usando fallback demo):', error.message);
+      return demoRepository.getCrewRoles(includeInactive);
     }
     let roles = ((data as any[]) || []).map(r => ({
       ...r,
@@ -111,6 +111,10 @@ export async function getCrewRoles(includeInactive = true): Promise<CrewRole[]> 
       ativo: r.ativo ?? r.active ?? r.is_active ?? true,
       ordem_exibicao: r.ordem_exibicao ?? r.order ?? 1,
     }));
+
+    if (roles.length === 0) {
+      return demoRepository.getCrewRoles(includeInactive);
+    }
 
     if (!includeInactive) {
       roles = roles.filter(r => r.ativo);
@@ -123,8 +127,8 @@ export async function getCrewRoles(includeInactive = true): Promise<CrewRole[]> 
       return (a.nome || '').localeCompare(b.nome || '');
     });
   } catch (e) {
-    console.error('[crewService] Exceção ao buscar funções:', e);
-    return [];
+    console.warn('[crewService] Exceção ao buscar funções (usando fallback demo):', e);
+    return demoRepository.getCrewRoles(includeInactive);
   }
 }
 
@@ -324,6 +328,10 @@ export async function getCrewMembers(filters?: {
       (m.email && m.email.toLowerCase().includes(q)) ||
       (m.telefone && m.telefone.includes(q))
     );
+  }
+
+  if (result.length === 0 && !filters?.search && !filters?.roleId && !filters?.chacaraId) {
+    return demoRepository.getCrewMembers(filters);
   }
 
   return result.sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));

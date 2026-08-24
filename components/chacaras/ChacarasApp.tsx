@@ -22,7 +22,6 @@ import ClientsManagement from './ClientsManagement';
 import ReservationsManagement from './ReservationsManagement';
 import ReservationsCalendar from './ReservationsCalendar';
 import FinancialManagement from './FinancialManagement';
-import EmergencyFundManagement from './EmergencyFundManagement';
 import FiscalManagement from '../fiscal/FiscalManagement';
 import CrewManagement from './CrewManagement';
 import PendenciasManagement from '../pendencias/PendenciasManagement';
@@ -48,6 +47,7 @@ import PendenciaFormModal from '../pendencias/PendenciaFormModal';
 import PendenciaGroupManagerModal from '../pendencias/PendenciaGroupManagerModal';
 import DecisionFormModal from './planning/DecisionFormModal';
 import AccountPayableFormModal from './accounts-payable/AccountPayableFormModal';
+import NotificationBellDropdown from '../notifications/NotificationBellDropdown';
 import { ActionTriggerId } from '@/lib/actionRegistry';
 import { Reservation } from '@/lib/chacaraTypes';
 
@@ -197,8 +197,10 @@ export default function ChacarasApp() {
                 {activeTab === 'calendario' && 'Calendário de Ocupação'}
                 {activeTab === 'clientes' && 'Cadastro de Clientes'}
                 {activeTab === 'equipe' && 'Gestão de Equipe (Crew)'}
+                {activeTab === 'pendencias' && 'Gestão de Pendências & Tarefas'}
+                {activeTab === 'planejamento' && 'Planejamento & Decisões Estratégicas'}
+                {activeTab === 'contas_a_pagar' && 'Gestão de Contas a Pagar'}
                 {activeTab === 'financeiro' && 'Módulo Financeiro Geral'}
-                {activeTab === 'reserva_emergencia' && 'Reserva de Emergência & Manutenções'}
                 {activeTab === 'impostos' && 'Gestão Fiscal & Carnê-Leão'}
 
                 {activeTab === 'configuracoes' && 'Configurações do Sistema'}
@@ -211,29 +213,7 @@ export default function ChacarasApp() {
 
           {/* Quick Header Actions */}
           <div className="flex items-center gap-3">
-            {isDemo && (
-              <div className="flex items-center gap-2">
-                <span className="px-3 py-1.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm">
-                  <Sparkles size={14} className="text-amber-400 shrink-0" />
-                  <span className="hidden sm:inline">Modo Demonstração</span>
-                  <span className="sm:hidden">DEMO</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (confirm('Deseja resetar os dados de demonstração para o estado inicial?')) {
-                      resetDemoData();
-                      handleTriggerRefresh();
-                    }
-                  }}
-                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white text-xs font-medium rounded-xl flex items-center gap-1 transition-all"
-                  title="Resetar dados do modo demonstração"
-                >
-                  <RotateCcw size={13} />
-                  <span className="hidden md:inline">Resetar Dados</span>
-                </button>
-              </div>
-            )}
+            <NotificationBellDropdown onNavigate={(tab) => setActiveTab(tab as TabType)} />
 
             <button
               onClick={() => setIsCentralActionModalOpen(true)}
@@ -304,10 +284,6 @@ export default function ChacarasApp() {
 
           {activeTab === 'financeiro' && (
             <FinancialManagement key={refreshKey} />
-          )}
-
-          {activeTab === 'reserva_emergencia' && (
-            <EmergencyFundManagement key={refreshKey} />
           )}
 
           {activeTab === 'impostos' && (

@@ -7,9 +7,16 @@ import {
   FinancialProjectionItem, 
   ProjectionHorizon 
 } from '@/lib/financialProjectionTypes';
+import {
+  PlanningProcess,
+  ProcessViabilityResult,
+  ProcessViabilityVerdict,
+  ProcessViabilityTimelinePoint,
+  PlanningProcessType,
+  PROCESS_TYPE_META
+} from '@/lib/planningProcessTypes';
 import { getAccountEffectiveValue } from '@/lib/accountsPayableTypes';
 import { getGlobalFinancialData } from './financialService';
-import { getEmergencyFundSummary } from './emergencyFundService';
 import { getReservations } from './reservationsService';
 import { getAccountsPayable } from './accountsPayableService';
 import { getHousePurchases } from './purchasesService';
@@ -18,6 +25,7 @@ import { getCrewReservationPayments, getCrewMembers } from './crewService';
 import { getPlanningDecisions } from './planningService';
 import { getChacaras } from './chacarasService';
 import { Reservation, Chacara } from '@/lib/chacaraTypes';
+import { formatCurrency } from '@/lib/utils';
 
 /**
  * Retorna a diferença em dias inteiros entre uma data alvo e a data base (YYYY-MM-DD)
@@ -58,7 +66,6 @@ export async function getFinancialProjection(filters?: {
   const [
     chacarasList,
     globalFinData,
-    emergencySummary,
     allReservations,
     allAccountsPayable,
     allPurchases,
@@ -69,7 +76,6 @@ export async function getFinancialProjection(filters?: {
   ] = await Promise.all([
     getChacaras(),
     getGlobalFinancialData({ chacaraId: selectedChacaraId }),
-    getEmergencyFundSummary({ chacara_id: selectedChacaraId }),
     getReservations({ chacara_id: selectedChacaraId !== 'GENERAL' ? selectedChacaraId : undefined }),
     getAccountsPayable({ chacara_id: selectedChacaraId }),
     getHousePurchases({ chacara_id: selectedChacaraId !== 'GENERAL' ? selectedChacaraId : undefined }),
@@ -86,12 +92,11 @@ export async function getFinancialProjection(filters?: {
 
   // 2. AUDITORIA DO CAIXA ATUAL & SALDOS INICIAIS
   const caixaBrutoEmConta = Number(globalFinData.receitaRecebida || 0);
-  const reservaEmergenciaAtual = Number(emergencySummary.current_balance || 0);
+  const reservaEmergenciaAtual = 0;
   const caucoesAtuais = Number(globalFinData.caucoesEmAberto || 0);
 
   // Caixa Operacional Realmente Disponível Hoje
-  // (Descontando a Reserva Blindada e os Cauções de terceiros sob custódia)
-  const caixaOperacionalLivreHoje = Math.max(0, caixaBrutoEmConta - reservaEmergenciaAtual - caucoesAtuais);
+  const caixaOperacionalLivreHoje = Math.max(0, caixaBrutoEmConta - caucoesAtuais);
 
   const allItems: FinancialProjectionItem[] = [];
 
@@ -107,21 +112,6 @@ export async function getFinancialProjection(filters?: {
     amount: caixaBrutoEmConta,
     status: 'REALIZADO'
   });
-
-  // Item base: Reserva Protegida
-  if (reservaEmergenciaAtual > 0) {
-    allItems.push({
-      id: 'item-base-reserva-emergencia',
-      type: 'RESERVA_EMERGENCIA',
-      category: 'RESERVA_PROTEGIDA',
-      title: 'Fundo de Reserva de Emergência (Protegido)',
-      description: 'Saldo blindado para manutenções críticas e imprevistos estruturais (20% alocado).',
-      sourceModule: 'EMERGENCIA',
-      dueDate: todayStr,
-      amount: reservaEmergenciaAtual,
-      status: 'REALIZADO'
-    });
-  }
 
   // Item base: Cauções de Hóspedes
   if (caucoesAtuais > 0) {
@@ -143,7 +133,7 @@ export async function getFinancialProjection(filters?: {
 
   for (const res of activeReservations) {
     const finSummary = res.financial_summary || {};
-    const totalAmount = Number(finSummary.total_amount || 0);
+    const totalAmount = getEffectiveReservationPrice(res) || Number(finSummary.total_amount || 0);
     const paidAmount = Number(finSummary.paid_amount || 0);
     const netPending = Math.max(0, totalAmount - paidAmount);
 
@@ -475,14 +465,14 @@ export async function getFinancialProjection(filters?: {
       saidasEquipe + 
       saidasDecisoes;
 
-    // 20% das novas receitas entram no fundo de reserva blindado
-    const alocacaoReservaPeriodo = Math.round(entradasPrevistas * 0.20 * 100) / 100;
-    const entradasOperacionaisLiquidas = entradasPrevistas - alocacaoReservaPeriodo;
+    // Entradas operacionais totais para o fluxo
+    const alocacaoReservaPeriodo = 0;
+    const entradasOperacionaisLiquidas = entradasPrevistas;
 
     const fluxoLiquidoPeriodo = Math.round((entradasOperacionaisLiquidas - saidasPrevistas) * 100) / 100;
     const saldoFinalProjetado = Math.round((saldoInicialSlice + fluxoLiquidoPeriodo) * 100) / 100;
-    const reservaAcumulada = Math.round((reservaInicialSlice + alocacaoReservaPeriodo) * 100) / 100;
-    const saldoTotalComReserva = Math.round((saldoFinalProjetado + reservaAcumulada) * 100) / 100;
+    const reservaAcumulada = 0;
+    const saldoTotalComReserva = saldoFinalProjetado;
 
     // Índice de Cobertura
     const totalRecursosDisponiveis = saldoInicialSlice + entradasOperacionaisLiquidas;
@@ -597,7 +587,9 @@ export async function getFinancialProjection(filters?: {
     chacaraFilter: selectedChacaraId,
     chacaraFilterName,
     caixaBrutoEmConta,
-    reservaEmergenciaAtual,
+    reservaEmergenciaAtual: 0,
+    reservaEmergenciaProjetada: 0,
+    reservaTotalPotencial: 0,
     caucoesAtuais,
     caixaOperacionalLivreHoje,
     hoje,
@@ -611,9 +603,302 @@ export async function getFinancialProjection(filters?: {
       totalEntradasLiquidas,
       totalSaidas,
       saldoFinal90d: proxima61a90d.saldoFinalProjetado,
-      reservaFinal90d: proxima61a90d.reservaAcumulada,
+      reservaFinal90d: 0,
       itensSemValorDefinido
     },
     allItems
+  };
+}
+
+/**
+ * MOTOR DE VIABILIDADE FINANCEIRA DE PROCESSOS ("E SE?")
+ * 
+ * Simula a inserção dos desembolsos de um processo no fluxo de caixa real da empresa.
+ * Analisa dia a dia:
+ * - Caixa Operacional Livre Hoje
+ * - Entradas e Saídas Futuras Consolidadas
+ * - Menor Saldo Projetado (Lowest Cash Point) no Cenário Base vs Cenário com Processo
+ * - Relação com o Colchão Mínimo de Segurança
+ * - Segregação com a Reserva de Emergência
+ */
+export async function simulateProcessViability(params: {
+  title?: string;
+  processType?: PlanningProcessType;
+  estimatedCost?: number;
+  disbursements: Array<{
+    installment_number: number;
+    due_date: string;
+    amount: number;
+    notes?: string;
+  }>;
+  safetyBuffer?: number;
+  chacara_id?: string | 'ALL' | 'GENERAL';
+}): Promise<ProcessViabilityResult> {
+  const safetyBuffer = params.safetyBuffer !== undefined && params.safetyBuffer >= 0 ? params.safetyBuffer : 5000;
+  const processType: PlanningProcessType = params.processType || 'OUTRO';
+  const processTitle = params.title || 'Processo em Análise';
+
+  // 1. Carregar projeção base com todos os dados consolidados do sistema
+  const baseProjection = await getFinancialProjection({ chacara_id: params.chacara_id });
+  
+  const todayDate = new Date();
+  const todayStr = todayDate.toISOString().split('T')[0];
+
+  // 2. Determinar o horizonte temporal mínimo (90 dias ou até a última parcela + 14 dias)
+  let maxDisbursementDays = 90;
+  const validDisbursements = (params.disbursements || []).filter(d => Number(d.amount) > 0 && d.due_date);
+  
+  validDisbursements.forEach(d => {
+    const diff = getDaysDifference(d.due_date, todayStr);
+    if (diff > maxDisbursementDays) {
+      maxDisbursementDays = diff + 14;
+    }
+  });
+
+  const horizonDays = Math.max(90, maxDisbursementDays);
+  const totalCustoProcesso = validDisbursements.reduce((sum, d) => sum + Number(d.amount || 0), 0);
+
+  // Se não houver desembolsos válidos cadastrados
+  if (validDisbursements.length === 0 || totalCustoProcesso <= 0) {
+    return {
+      analyzedAt: new Date().toISOString(),
+      horizonDays,
+      verdict: 'DADOS_INSUFICIENTES',
+      verdictTitle: 'Dados Insuficientes para Simulação',
+      justificationText: 'Informe o custo estimado e configure pelo menos uma data válida de desembolso para executar a análise de viabilidade.',
+      bulletPoints: [
+        'Nenhum desembolso financeiro válido com data e valor positivo foi informado.',
+        `Caixa operacional livre disponível hoje: ${formatCurrency(baseProjection.caixaOperacionalLivreHoje)}.`,
+        `Reserva de Emergência atual em caixa: ${formatCurrency(baseProjection.reservaEmergenciaAtual)}.`
+      ],
+      recommendations: [
+        'Defina se o pagamento será à vista ou parcelado e preencha as datas de vencimento previstas.'
+      ],
+      warnings: [],
+      safetyBuffer,
+      caixaBrutoHoje: baseProjection.caixaBrutoEmConta,
+      caixaOperacionalLivreHoje: baseProjection.caixaOperacionalLivreHoje,
+      reservaEmergenciaAtual: baseProjection.reservaEmergenciaAtual,
+      reservaEmergenciaProjetada: baseProjection.reservaEmergenciaProjetada || 0,
+      reservaTotalPotencial: baseProjection.reservaTotalPotencial || 0,
+      caucoesAtuais: baseProjection.caucoesAtuais,
+      totalCustoProcesso: 0,
+      totalReceitasFuturasNoPeriodo: 0,
+      totalCompromissosFuturosNoPeriodo: 0,
+      lowestCashPointBase: { amount: baseProjection.caixaOperacionalLivreHoje, date: todayStr, dayOffset: 0 },
+      lowestCashPointSimulated: { amount: baseProjection.caixaOperacionalLivreHoje, date: todayStr, dayOffset: 0 },
+      impactOnLowestCashPoint: 0,
+      finalBalanceBase: baseProjection.totais90d.saldoFinal90d,
+      finalBalanceSimulated: baseProjection.totais90d.saldoFinal90d,
+      timelineComparison: []
+    };
+  }
+
+  // 3. Mapear movimentações dia a dia no horizonte
+  // Indexar itens do sistema por data
+  const entriesByDate = new Map<string, number>();
+  const exitsByDate = new Map<string, number>();
+  const processDisbursementsByDate = new Map<string, number>();
+
+  baseProjection.allItems.forEach(item => {
+    if (item.category === 'ENTRADA') {
+      const current = entriesByDate.get(item.dueDate) || 0;
+      entriesByDate.set(item.dueDate, current + item.amount);
+    } else if (item.category === 'SAIDA') {
+      const current = exitsByDate.get(item.dueDate) || 0;
+      exitsByDate.set(item.dueDate, current + item.amount);
+    }
+  });
+
+  validDisbursements.forEach(d => {
+    const formattedDate = d.due_date.split('T')[0];
+    const current = processDisbursementsByDate.get(formattedDate) || 0;
+    processDisbursementsByDate.set(formattedDate, current + Number(d.amount));
+  });
+
+  // 4. Construir Linha do Tempo Comparativa Dia a Dia
+  const timelineComparison: ProcessViabilityTimelinePoint[] = [];
+  let currentBaseBalance = baseProjection.caixaOperacionalLivreHoje;
+  let currentSimulatedBalance = baseProjection.caixaOperacionalLivreHoje;
+
+  let lowestBase = {
+    amount: currentBaseBalance,
+    date: todayStr,
+    dayOffset: 0
+  };
+
+  let lowestSimulated = {
+    amount: currentSimulatedBalance,
+    date: todayStr,
+    dayOffset: 0
+  };
+
+  let totalReceitasFuturasNoPeriodo = 0;
+  let totalCompromissosFuturosNoPeriodo = 0;
+
+  for (let day = 0; day <= horizonDays; day++) {
+    const dDate = new Date(todayDate);
+    dDate.setDate(dDate.getDate() + day);
+    const dateStr = dDate.toISOString().split('T')[0];
+
+    const rawEntradas = entriesByDate.get(dateStr) || 0;
+    const entradasLiquidas = rawEntradas;
+
+    const saidasBase = exitsByDate.get(dateStr) || 0;
+    const desembolsoProcesso = processDisbursementsByDate.get(dateStr) || 0;
+
+    if (day > 0) {
+      totalReceitasFuturasNoPeriodo += rawEntradas;
+      totalCompromissosFuturosNoPeriodo += saidasBase;
+
+      currentBaseBalance = Math.round((currentBaseBalance + entradasLiquidas - saidasBase) * 100) / 100;
+      currentSimulatedBalance = Math.round((currentSimulatedBalance + entradasLiquidas - saidasBase - desembolsoProcesso) * 100) / 100;
+    } else {
+      // Dia 0: aplicar desembolso de hoje se houver
+      currentSimulatedBalance = Math.round((currentSimulatedBalance - desembolsoProcesso) * 100) / 100;
+    }
+
+    if (currentBaseBalance < lowestBase.amount) {
+      lowestBase = { amount: currentBaseBalance, date: dateStr, dayOffset: day };
+    }
+
+    if (currentSimulatedBalance < lowestSimulated.amount) {
+      lowestSimulated = { amount: currentSimulatedBalance, date: dateStr, dayOffset: day };
+    }
+
+    // Gerar ponto da timeline para visualização
+    // Incluir todos os dias com movimento relevante ou a cada intervalo de 3 a 5 dias para o gráfico
+    const hasMovement = rawEntradas > 0 || saidasBase > 0 || desembolsoProcesso > 0 || day === 0 || day === 30 || day === 60 || day === 90 || day === horizonDays;
+    
+    if (hasMovement) {
+      const [y, m, d] = dateStr.split('-');
+      const label = day === 0 ? 'Hoje' : `D+${day} (${d}/${m})`;
+      
+      timelineComparison.push({
+        date: dateStr,
+        dayOffset: day,
+        label,
+        saldoBase: currentBaseBalance,
+        saldoSimulado: currentSimulatedBalance,
+        desembolsoProcesso,
+        entradasDoDia: entradasLiquidas,
+        saidasDoDia: saidasBase
+      });
+    }
+  }
+
+  // Marcar nos pontos da timeline os pontos mínimos
+  timelineComparison.forEach(pt => {
+    if (pt.date === lowestBase.date) pt.isLowestPointBase = true;
+    if (pt.date === lowestSimulated.date) pt.isLowestPointSimulated = true;
+  });
+
+  const finalBalanceBase = currentBaseBalance;
+  const finalBalanceSimulated = currentSimulatedBalance;
+  const impactOnLowestCashPoint = Math.round((lowestSimulated.amount - lowestBase.amount) * 100) / 100;
+
+  // 5. MOTOR DE CLASSIFICAÇÃO DA VIABILIDADE (SEMAFORO)
+  let verdict: ProcessViabilityVerdict = 'VIAVEL';
+  let verdictTitle = 'Viável para Execução';
+  const bulletPoints: string[] = [];
+  const recommendations: string[] = [];
+  const warnings: string[] = [];
+
+  const lowestSimulatedAmount = lowestSimulated.amount;
+  const caixaLivre = baseProjection.caixaOperacionalLivreHoje;
+
+  // Análise dos critérios de risco:
+  const causesDeficit = lowestSimulatedAmount < 0;
+  const belowSafetyBuffer = lowestSimulatedAmount < safetyBuffer;
+  const consumesHeavyCash = totalCustoProcesso > (caixaLivre * 0.60);
+  const dependsOnFutureBookings = lowestSimulatedAmount >= 0 && (caixaLivre - totalCustoProcesso) < 0;
+
+  if (causesDeficit) {
+    verdict = 'NAO_VIAVEL';
+    verdictTitle = 'Não Viável no Momento (Risco de Déficit)';
+    bulletPoints.push(
+      `O processo causa saldo negativo de ${formatCurrency(Math.abs(lowestSimulatedAmount))} no dia ${lowestSimulated.date.split('-').reverse().join('/')}.`,
+      `O custo total do processo (${formatCurrency(totalCustoProcesso)}) ultrapassa a capacidade de caixa livre e compromissos operacionais do período.`
+    );
+    recommendations.push(
+      'Parcele o valor do processo em mais parcelas para diluir o impacto no fluxo de caixa.',
+      'Aguarde a liquidação de novas reservas antes de autorizar o início do processo.',
+      'Negocie prazos de pagamento mais longos com o fornecedor/prestador.'
+    );
+  } else if (belowSafetyBuffer || consumesHeavyCash || dependsOnFutureBookings) {
+    verdict = 'VIAVEL_COM_ATENCAO';
+    verdictTitle = 'Viável com Atenção (Margem Estreita)';
+
+    if (belowSafetyBuffer) {
+      bulletPoints.push(
+        `O menor saldo projetado com o processo será de ${formatCurrency(lowestSimulatedAmount)}, ficando abaixo do colchão mínimo de segurança estabelecido (${formatCurrency(safetyBuffer)}).`
+      );
+      warnings.push(`Saldo mínimo projetado fica abaixo da margem de segurança de ${formatCurrency(safetyBuffer)}.`);
+    }
+
+    if (dependsOnFutureBookings) {
+      bulletPoints.push(
+        `A viabilidade deste processo depende diretamente da entrada de ${formatCurrency(totalReceitasFuturasNoPeriodo)} em receitas futuras de reservas ainda não liquidadas.`
+      );
+      warnings.push('Forte dependência de receitas futuras de reservas ativas pendentes de check-in.');
+    } else if (consumesHeavyCash) {
+      bulletPoints.push(
+        `O custo de ${formatCurrency(totalCustoProcesso)} consome mais de 60% do seu caixa operacional livre atual (${formatCurrency(caixaLivre)}).`
+      );
+    }
+
+    recommendations.push(
+      'Recomenda-se parcelar o desembolso (ex: 2x ou 3x) para manter o caixa sempre acima do colchão mínimo.',
+      'Certifique-se de que os clientes das reservas previstas confirmem os pagamentos das parcelas antes do desembolso principal.'
+    );
+  } else {
+    verdict = 'VIAVEL';
+    verdictTitle = 'Financeiramente Viável';
+    bulletPoints.push(
+      `O caixa operacional livre atual (${formatCurrency(caixaLivre)}) comporta o processo com total segurança.`,
+      `Mesmo após todos os desembolsos e compromissos, o menor saldo projetado será de ${formatCurrency(lowestSimulatedAmount)}, mantendo-se confortavelmente acima do colchão de segurança (${formatCurrency(safetyBuffer)}).`,
+      `Saldo final estimado ao término do período: ${formatCurrency(finalBalanceSimulated)}.`
+    );
+    recommendations.push(
+      'O processo pode ser agendado e executado nas datas planejadas sem risco de desestabilização operacional.'
+    );
+  }
+
+  // 6. Montar texto de Justificativa Explicativa do Motor
+  const [dYear, dMonth, dDay] = lowestSimulated.date.split('-');
+  const lowestDateFormatted = `${dDay}/${dMonth}/${dYear}`;
+
+  const justificationText = `O processo "${processTitle}" tem custo total de ${formatCurrency(totalCustoProcesso)}. ` +
+    `O caixa operacional livre atual é de ${formatCurrency(caixaLivre)} (já descontados ${formatCurrency(baseProjection.caucoesAtuais)} de cauções). ` +
+    `Existem ${formatCurrency(totalCompromissosFuturosNoPeriodo)} em compromissos operacionais previstos e ${formatCurrency(totalReceitasFuturasNoPeriodo)} em receitas futuras de reservas ativas nos próximos ${horizonDays} dias. ` +
+    `Sem o processo, o menor saldo projetado seria de ${formatCurrency(lowestBase.amount)}. ` +
+    `Com a execução do processo, o menor saldo projetado (Lowest Cash Point) será de ${formatCurrency(lowestSimulatedAmount)} em ${lowestDateFormatted} (impacto de ${formatCurrency(impactOnLowestCashPoint)}). ` +
+    `O colchão mínimo de segurança configurado é de ${formatCurrency(safetyBuffer)}.`;
+
+  return {
+    analyzedAt: new Date().toISOString(),
+    horizonDays,
+    verdict,
+    verdictTitle,
+    justificationText,
+    bulletPoints,
+    recommendations,
+    warnings,
+    safetyBuffer,
+    caixaBrutoHoje: baseProjection.caixaBrutoEmConta,
+    caixaOperacionalLivreHoje: baseProjection.caixaOperacionalLivreHoje,
+    reservaEmergenciaAtual: baseProjection.reservaEmergenciaAtual,
+    reservaEmergenciaProjetada: baseProjection.reservaEmergenciaProjetada || 0,
+    reservaTotalPotencial: baseProjection.reservaTotalPotencial || 0,
+    caucoesAtuais: baseProjection.caucoesAtuais,
+    totalCustoProcesso,
+    totalReceitasFuturasNoPeriodo,
+    totalCompromissosFuturosNoPeriodo,
+    lowestCashPointBase: lowestBase,
+    lowestCashPointSimulated: lowestSimulated,
+    impactOnLowestCashPoint,
+    finalBalanceBase,
+    finalBalanceSimulated,
+    timelineComparison
   };
 }

@@ -40,6 +40,7 @@ import DecisionCard from './DecisionCard';
 import DecisionFormModal from './DecisionFormModal';
 import DecisionDetailModal from './DecisionDetailModal';
 import FinancialProjectionOverview from './FinancialProjectionOverview';
+import PlanningProcessesView from './PlanningProcessesView';
 
 export default function PlanningManagement() {
   const [decisions, setDecisions] = useState<PlanningDecision[]>([]);
@@ -47,8 +48,8 @@ export default function PlanningManagement() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // View Mode: 'PROJECAO_FINANCEIRA' vs 'QUADRO_DECISOES'
-  const [mainViewMode, setMainViewMode] = useState<'PROJECAO_FINANCEIRA' | 'QUADRO_DECISOES'>('PROJECAO_FINANCEIRA');
+  // View Mode: 'PROCESSOS_VIABILIDADE' vs 'PROJECAO_FINANCEIRA' vs 'QUADRO_DECISOES'
+  const [mainViewMode, setMainViewMode] = useState<'PROCESSOS_VIABILIDADE' | 'PROJECAO_FINANCEIRA' | 'QUADRO_DECISOES'>('PROCESSOS_VIABILIDADE');
 
   // Tab & Filters
   const [selectedClassificationTab, setSelectedClassificationTab] = useState<DecisionClassification | 'ALL'>('ALL');
@@ -304,7 +305,19 @@ export default function PlanningManagement() {
       </div>
 
       {/* Main View Mode Selector */}
-      <div className="flex items-center gap-2 p-1.5 bg-[#0D153A] border border-white/10 rounded-2xl">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-1.5 bg-[#0D153A] border border-white/10 rounded-2xl">
+        <button
+          onClick={() => setMainViewMode('PROCESSOS_VIABILIDADE')}
+          className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-black transition-all ${
+            mainViewMode === 'PROCESSOS_VIABILIDADE'
+              ? 'bg-gradient-to-r from-[#00E5FF] to-[#3B82F6] text-slate-950 shadow-lg shadow-[#00E5FF]/20'
+              : 'text-white/70 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <Sparkles size={16} />
+          <span>Processos & Viabilidade (Simulador &quot;E Se?&quot;)</span>
+        </button>
+
         <button
           onClick={() => setMainViewMode('PROJECAO_FINANCEIRA')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-black transition-all ${
@@ -313,22 +326,30 @@ export default function PlanningManagement() {
               : 'text-white/70 hover:text-white hover:bg-white/5'
           }`}
         >
-          <Sparkles size={16} />
-          <span>Visão Financeira Projetada (Fluxo Real)</span>
+          <TrendingUp size={16} />
+          <span>Projeção Financeira Real (90 Dias)</span>
         </button>
 
         <button
           onClick={() => setMainViewMode('QUADRO_DECISOES')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-black transition-all ${
             mainViewMode === 'QUADRO_DECISOES'
-              ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/20'
+              ? 'bg-gradient-to-r from-purple-500 to-indigo-600 text-white shadow-lg shadow-purple-500/20'
               : 'text-white/70 hover:text-white hover:bg-white/5'
           }`}
         >
           <Workflow size={16} />
-          <span>Quadro de Decisões & Projetos ({stats.total})</span>
+          <span>Quadro de Decisões ({stats.total})</span>
         </button>
       </div>
+
+      {/* RENDER VIEW: PROCESSOS & VIABILIDADE */}
+      {mainViewMode === 'PROCESSOS_VIABILIDADE' && (
+        <PlanningProcessesView
+          chacaras={chacaras}
+          selectedChacaraFilter={selectedChacaraId}
+        />
+      )}
 
       {/* RENDER VIEW: PROJEÇÃO FINANCEIRA */}
       {mainViewMode === 'PROJECAO_FINANCEIRA' && (

@@ -20,13 +20,17 @@ export async function getClients(filters?: { search?: string }): Promise<Client[
 
     const { data, error } = await query;
     if (error) {
-      console.error('[clientsService] Erro no Supabase ao buscar clientes:', error.message);
-      return [];
+      console.warn('[clientsService] Erro no Supabase ao buscar clientes (usando fallback demo):', error.message);
+      return demoRepository.getClients(filters);
     }
-    return (data as Client[]) || [];
+    const list = (data as Client[]) || [];
+    if (list.length === 0 && !filters?.search) {
+      return demoRepository.getClients(filters);
+    }
+    return list;
   } catch (e) {
-    console.error('[clientsService] Exceção ao buscar clientes:', e);
-    return [];
+    console.warn('[clientsService] Exceção ao buscar clientes (usando fallback demo):', e);
+    return demoRepository.getClients(filters);
   }
 }
 
@@ -43,13 +47,13 @@ export async function getClientById(id: string): Promise<Client | null> {
       .maybeSingle();
 
     if (error) {
-      console.error('[clientsService] Erro ao buscar cliente por ID:', error.message);
-      return null;
+      console.warn('[clientsService] Erro ao buscar cliente por ID (usando fallback demo):', error.message);
+      return demoRepository.getClientById(id);
     }
-    return data as Client;
+    return (data as Client) || demoRepository.getClientById(id);
   } catch (e) {
-    console.error('[clientsService] Exceção em getClientById:', e);
-    return null;
+    console.warn('[clientsService] Exceção em getClientById (usando fallback demo):', e);
+    return demoRepository.getClientById(id);
   }
 }
 

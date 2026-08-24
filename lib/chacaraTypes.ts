@@ -233,15 +233,38 @@ export interface Reservation {
 
 export function getEffectiveReservationPrice(res: Partial<Reservation> | null | undefined): number {
   if (!res) return 0;
-  if (res.custom_price != null && !isNaN(Number(res.custom_price))) {
+  if (res.custom_price != null && !isNaN(Number(res.custom_price)) && Number(res.custom_price) > 0) {
     return Number(res.custom_price);
   }
   const fin = res.financial_summary;
-  if (fin?.custom_price != null && !isNaN(Number(fin.custom_price))) {
+  if (fin?.custom_price != null && !isNaN(Number(fin.custom_price)) && Number(fin.custom_price) > 0) {
     return Number(fin.custom_price);
   }
-  if (fin?.total_amount != null && !isNaN(Number(fin.total_amount))) {
+  if (fin?.total_amount != null && !isNaN(Number(fin.total_amount)) && Number(fin.total_amount) > 0) {
     return Number(fin.total_amount);
+  }
+  if (fin?.calculated_total != null && !isNaN(Number(fin.calculated_total)) && Number(fin.calculated_total) > 0) {
+    return Number(fin.calculated_total);
+  }
+  if ((res as any)?.total_price != null && !isNaN(Number((res as any).total_price)) && Number((res as any).total_price) > 0) {
+    return Number((res as any).total_price);
+  }
+  if (fin?.daily_rates_subtotal != null && !isNaN(Number(fin.daily_rates_subtotal)) && Number(fin.daily_rates_subtotal) > 0) {
+    return Number(fin.daily_rates_subtotal) + (Number(fin.cleaning_fee) || 0) + (Number(fin.extra_guests_total) || 0);
+  }
+  // Fallback: cálculo baseado na chácara e no número de diárias
+  if (res.chacara && res.checkin_date && res.checkout_date) {
+    try {
+      const dIn = new Date(`${res.checkin_date}T00:00:00`);
+      const dOut = new Date(`${res.checkout_date}T00:00:00`);
+      const diffTime = dOut.getTime() - dIn.getTime();
+      const diffDays = Math.max(1, Math.round(diffTime / (1000 * 60 * 60 * 24)));
+      const rate = res.chacara.daily_rate_standard || res.chacara.daily_rate_weekend || 1000;
+      const cleanFee = res.chacara.cleaning_fee || 0;
+      return (diffDays * rate) + cleanFee;
+    } catch {
+      // ignore
+    }
   }
   return 0;
 }
@@ -494,6 +517,8 @@ export interface ReservationFullFinancialSummary {
   refunds: ReservationRefund[];
   total_contracted: number;
   total_received: number;
+  period_received?: number;
+  period_payments?: ReservationPayment[];
   total_expenses: number;
   total_refunds: number;
   net_balance: number;

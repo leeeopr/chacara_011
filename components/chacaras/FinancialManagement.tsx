@@ -22,14 +22,17 @@ import {
   Download,
   ArrowUpRight,
   Percent,
-  Shield
+  Shield,
+  ShieldCheck,
+  Wallet,
+  Layers,
+  Sparkles
 } from 'lucide-react';
 import { Chacara, Client, Reservation } from '@/lib/chacaraTypes';
 import { getGlobalFinancialData, GlobalFinancialMetrics } from '@/services/financialService';
 import { getChacaras } from '@/services/chacarasService';
 import { getClients } from '@/services/clientsService';
 import ReservationDetailModal from './ReservationDetailModal';
-import EmergencyFundManagement from './EmergencyFundManagement';
 
 const FINANCIAL_STATUS_BADGES: Record<string, { label: string; bg: string; text: string }> = {
   EM_ABERTO: { label: 'Em Aberto', bg: 'bg-amber-500/20 border-amber-500/30', text: 'text-amber-400' },
@@ -41,7 +44,6 @@ const FINANCIAL_STATUS_BADGES: Record<string, { label: string; bg: string; text:
 };
 
 export default function FinancialManagement() {
-  const [activeSubTab, setActiveSubTab] = useState<'OVERVIEW' | 'EMERGENCY_FUND'>('OVERVIEW');
   const [data, setData] = useState<GlobalFinancialMetrics | null>(null);
   const [chacaras, setChacaras] = useState<Chacara[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -114,6 +116,21 @@ export default function FinancialManagement() {
     return clientName.includes(term) || code.includes(term) || chacaraName.includes(term);
   });
 
+  // Cálculos de Reserva de Emergência (25%)
+  const receitaRecebida = data?.receitaRecebida || 0;
+  const receitaPendente = data?.receitaPendente || 0;
+  const receitaPrevista = data?.receitaPrevista || 0; // Receita especulada total = recebido + pendente
+
+  // 1. Reserva baseada na Receita Recebida (25% dos pagamentos liquidados)
+  const reservaEmergenciaRecebida = Math.round(receitaRecebida * 0.25 * 100) / 100;
+
+  // 2. Reserva com base na Receita Especulada (25% da receita total contratada)
+  const reservaEmergenciaEspeculada = Math.round(receitaPrevista * 0.25 * 100) / 100;
+  const reservaEmergenciaPendente = Math.round(receitaPendente * 0.25 * 100) / 100;
+  const taxaIntegralizacao = reservaEmergenciaEspeculada > 0
+    ? Math.min(100, Math.round((reservaEmergenciaRecebida / reservaEmergenciaEspeculada) * 100))
+    : (reservaEmergenciaRecebida > 0 ? 100 : 0);
+
   return (
     <div className="space-y-6 animate-fade-in pb-12">
       {/* Top Header Banner */}
@@ -128,7 +145,7 @@ export default function FinancialManagement() {
             Módulo Financeiro Geral
           </h1>
           <p className="text-xs text-white/50 mt-0.5">
-            Rastreabilidade completa, lançamentos de recebimentos, cauções, despesas extras e conciliação de receitas.
+            Rastreabilidade completa, lançamentos de recebimentos, cauções, provisões de reserva e conciliação de receitas.
           </p>
         </div>
 
@@ -141,38 +158,6 @@ export default function FinancialManagement() {
         </button>
       </div>
 
-      {/* Sub-tab Switcher */}
-      <div className="flex items-center gap-2 border-b border-white/10 pb-4">
-        <button
-          onClick={() => setActiveSubTab('OVERVIEW')}
-          className={`px-4 py-2 rounded-2xl text-xs font-black transition-all flex items-center gap-2 ${
-            activeSubTab === 'OVERVIEW'
-              ? 'bg-[#FFD600] text-[#0A0F2C] shadow-lg shadow-[#FFD600]/10'
-              : 'bg-white/5 text-white/70 hover:bg-white/10 hover:text-white border border-white/10'
-          }`}
-        >
-          <DollarSign size={15} />
-          <span>Visão Geral das Reservas</span>
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('EMERGENCY_FUND')}
-          className={`px-4 py-2 rounded-2xl text-xs font-black transition-all flex items-center gap-2 ${
-            activeSubTab === 'EMERGENCY_FUND'
-              ? 'bg-amber-400 text-[#0A0F2C] shadow-lg shadow-amber-400/20'
-              : 'bg-white/5 text-white/70 hover:bg-white/10 hover:text-white border border-white/10'
-          }`}
-        >
-          <Shield size={15} />
-          <span>Reserva de Emergência & Manutenções</span>
-          <span className="px-2 py-0.5 rounded-full bg-black/20 text-[10px] font-black">20%</span>
-        </button>
-      </div>
-
-      {activeSubTab === 'EMERGENCY_FUND' ? (
-        <EmergencyFundManagement />
-      ) : (
-        <>
       {/* Main KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Receita Prevista */}
@@ -233,6 +218,114 @@ export default function FinancialManagement() {
             R$ {data?.totalReembolsos.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}
           </p>
           <span className="text-[10px] text-red-300/60 block">Valores estornados</span>
+        </div>
+      </div>
+
+      {/* Cards de Reserva de Emergência (25%) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Card 1: Reserva de Emergência com base na Receita Recebida (25%) */}
+        <div className="p-5 bg-gradient-to-br from-[#0A0F2C] to-[#0d1642] border border-emerald-500/30 rounded-3xl space-y-3 relative overflow-hidden shadow-xl">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none" />
+          
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                <ShieldCheck size={20} />
+              </div>
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 block">
+                  Reserva de Emergência • Receita Recebida
+                </span>
+                <span className="text-xs font-bold text-white/70">
+                  25% dos Pagamentos Liquidados
+                </span>
+              </div>
+            </div>
+            <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[10px] font-black uppercase tracking-wider">
+              25% Efetivo
+            </span>
+          </div>
+
+          <div className="pt-1">
+            <div className="text-2xl sm:text-3xl font-black text-emerald-400 tracking-tight">
+              R$ {reservaEmergenciaRecebida.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </div>
+            <p className="text-[11px] text-white/50 mt-1 leading-relaxed">
+              Valor preventivo já garantido pelo volume financeiro efetivamente creditado e confirmado em conta.
+            </p>
+          </div>
+
+          <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[11px]">
+            <span className="text-white/40">Base de Cálculo (Recebida):</span>
+            <span className="font-bold text-white">
+              R$ {receitaRecebida.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </span>
+          </div>
+        </div>
+
+        {/* Card 2: Reserva de Emergência com base na Receita Especulada (25%) */}
+        <div className="p-5 bg-gradient-to-br from-[#0A0F2C] to-[#0f1738] border border-[#FFD600]/30 rounded-3xl space-y-3 relative overflow-hidden shadow-xl">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-[#FFD600]/5 rounded-full blur-2xl pointer-events-none" />
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-[#FFD600]/10 border border-[#FFD600]/20 text-[#FFD600]">
+                <ShieldAlert size={20} />
+              </div>
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-[#FFD600] block">
+                  Reserva de Emergência • Receita Especulada
+                </span>
+                <span className="text-xs font-bold text-white/70">
+                  25% do Total Contratado (Recebido + A Receber)
+                </span>
+              </div>
+            </div>
+            <span className="px-2.5 py-1 rounded-full bg-[#FFD600]/20 border border-[#FFD600]/30 text-[#FFD600] text-[10px] font-black uppercase tracking-wider">
+              25% Global
+            </span>
+          </div>
+
+          <div className="pt-1">
+            <div className="text-2xl sm:text-3xl font-black text-[#FFD600] tracking-tight">
+              R$ {reservaEmergenciaEspeculada.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </div>
+            <p className="text-[11px] text-white/50 mt-1 leading-relaxed">
+              Provisão patrimonial máxima estimada considerando todas as reservas ativas (liquidadas e futuras).
+            </p>
+          </div>
+
+          {/* Subdivisão Recebido vs A Receber */}
+          <div className="pt-2 border-t border-white/10 space-y-2">
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div className="bg-white/5 p-2 rounded-xl border border-white/5">
+                <span className="text-emerald-400/80 block text-[10px] uppercase font-bold">Já Integralizado (25%)</span>
+                <span className="font-black text-emerald-400 text-xs">
+                  R$ {reservaEmergenciaRecebida.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="bg-white/5 p-2 rounded-xl border border-white/5">
+                <span className="text-amber-400/80 block text-[10px] uppercase font-bold">A Integralizar (25%)</span>
+                <span className="font-black text-amber-400 text-xs">
+                  R$ {reservaEmergenciaPendente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+
+            {/* Barra de Progresso de Integralização */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[10px] text-white/40">
+                <span>Progresso da Integralização</span>
+                <span className="font-bold text-[#FFD600]">{taxaIntegralizacao}%</span>
+              </div>
+              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-emerald-500 to-[#FFD600] transition-all duration-500 rounded-full"
+                  style={{ width: `${taxaIntegralizacao}%` }}
+                />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -534,8 +627,6 @@ export default function FinancialManagement() {
           </div>
         )}
       </div>
-      </>
-      )}
 
       {/* Reservation Detail & Financial Modal */}
       <ReservationDetailModal

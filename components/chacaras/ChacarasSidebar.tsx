@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
-export type TabType = 'dashboard' | 'chacaras' | 'reservas' | 'calendario' | 'clientes' | 'equipe' | 'pendencias' | 'planejamento' | 'contas_a_pagar' | 'financeiro' | 'reserva_emergencia' | 'impostos' | 'configuracoes';
+export type TabType = 'dashboard' | 'chacaras' | 'reservas' | 'calendario' | 'clientes' | 'equipe' | 'pendencias' | 'planejamento' | 'contas_a_pagar' | 'financeiro' | 'impostos' | 'configuracoes';
 
 interface ChacarasSidebarProps {
   activeTab: TabType;
@@ -51,7 +51,6 @@ export default function ChacarasSidebar({
     { id: 'planejamento', label: 'Planejamento', icon: Compass, badge: 'Fluxo' },
     { id: 'contas_a_pagar', label: 'Contas a Pagar', icon: Wallet, badge: 'Novo' },
     { id: 'financeiro', label: 'Financeiro', icon: DollarSign, badge: 'Fase 4' },
-    { id: 'reserva_emergencia', label: 'Reserva de Emergência', icon: Shield, badge: '20%' },
     { id: 'impostos', label: 'Impostos / Gestão Fiscal', icon: Receipt, badge: 'Carnê-Leão' },
     { id: 'configuracoes', label: 'Configurações', icon: Settings, badge: 'Fase 3' },
   ];

@@ -209,7 +209,7 @@ async function updateWithFallback(tableName: string, id: string, payload: Record
       if (data && data.length > 0) {
         return data[0];
       }
-      return null;
+      return currentPayload;
     }
 
     if (error) {
@@ -222,7 +222,7 @@ async function updateWithFallback(tableName: string, id: string, payload: Record
         delete currentPayload[match[1]];
         continue;
       }
-      console.warn('[accountsPayableService] Erro ao atualizar no Supabase:', error.message);
+      console.error('[accountsPayableService] Erro ao atualizar no Supabase:', error.message, error.details || '');
       return null;
     }
   }
@@ -452,18 +452,36 @@ export async function createAccountPayable(input: CreateAccountPayableInput): Pr
 export async function updateAccountPayable(id: string, input: UpdateAccountPayableInput): Promise<AccountPayable> {
   const localList = getLocalAccounts();
   const index = localList.findIndex(a => a.id === id);
-  
   const existing = index >= 0 ? localList[index] : null;
+
+  const isPaid = (input.status || existing?.status) === 'PAGA';
+  const targetValorPrevisto = input.valor_previsto != null 
+    ? Number(input.valor_previsto) 
+    : (existing?.valor_previsto || 0);
+
+  const targetValorReal = input.valor_real !== undefined 
+    ? (input.valor_real != null ? Number(input.valor_real) : null) 
+    : (existing?.valor_real ?? (existing?.valor_pago ?? null));
+
+  let targetValorPago: number | null | undefined = input.valor_pago;
+  if (targetValorPago === undefined) {
+    if (isPaid) {
+      // Se a conta está paga, o valor pago acompanha o valor real (se preenchido) ou o valor previsto
+      targetValorPago = targetValorReal !== null ? targetValorReal : targetValorPrevisto;
+    } else {
+      targetValorPago = existing?.valor_pago ?? null;
+    }
+  } else {
+    targetValorPago = targetValorPago != null ? Number(targetValorPago) : null;
+  }
+
   const updated: AccountPayable = {
     ...(existing || { id } as AccountPayable),
     ...input,
-    valor_previsto: input.valor_previsto != null ? Number(input.valor_previsto) : (existing?.valor_previsto || 0),
-    valor_real: input.valor_real !== undefined 
-      ? (input.valor_real != null ? Number(input.valor_real) : null) 
-      : (existing?.valor_real ?? null),
-    valor_pago: input.valor_pago !== undefined 
-      ? (input.valor_pago != null ? Number(input.valor_pago) : null) 
-      : existing?.valor_pago,
+    valor_previsto: targetValorPrevisto,
+    valor_real: targetValorReal,
+    valor_pago: targetValorPago,
+    status: input.status || existing?.status || 'PENDENTE',
     updated_at: new Date().toISOString()
   };
 
@@ -479,14 +497,60 @@ export async function updateAccountPayable(id: string, input: UpdateAccountPayab
   }
 
   try {
-    const remote = await updateWithFallback('accounts_payable', id, {
-      ...input,
+    const supabasePayload: Record<string, any> = {
+      descricao: updated.descricao,
+      categoria: updated.categoria,
+      tipo: updated.tipo,
+      recorrencia_frequencia: updated.recorrencia_frequencia ?? null,
+      recorrencia_dia_vencimento: updated.recorrencia_dia_vencimento ?? null,
+      data_vencimento: updated.data_vencimento,
+      valor_previsto: updated.valor_previsto,
+      valor_pago: updated.valor_pago,
       valor_real: updated.valor_real,
+      status: updated.status,
+      data_pagamento: updated.data_pagamento ?? null,
+      responsavel_pagamento: updated.responsavel_pagamento ?? null,
+      chacara_id: updated.chacara_id ?? null,
+      chacara_nome: updated.chacara_nome ?? null,
+      prestador_id: updated.prestador_id ?? null,
+      prestador_nome: updated.prestador_nome ?? null,
+      prestador_pix: updated.prestador_pix ?? null,
+      prestador_role: updated.prestador_role ?? null,
+      origem_tipo: updated.origem_tipo ?? 'MANUAL',
+      origem_id: updated.origem_id ?? null,
+      origem_titulo: updated.origem_titulo ?? null,
+      origem_data_servico: updated.origem_data_servico ?? null,
+      provider_billing_rule_id: updated.provider_billing_rule_id ?? null,
+      observacao: updated.observacao ?? null,
       updated_at: new Date().toISOString()
-    });
-    return remote ? { ...updated, ...remote } : updated;
+    };
+
+    const remote = await updateWithFallback('accounts_payable', id, supabasePayload);
+    if (remote) {
+      const mergedRemote: AccountPayable = {
+        ...updated,
+        ...remote,
+        valor_previsto: Number(remote.valor_previsto ?? updated.valor_previsto),
+        valor_real: remote.valor_real !== undefined && remote.valor_real !== null 
+          ? Number(remote.valor_real) 
+          : (remote.valor_pago != null ? Number(remote.valor_pago) : updated.valor_real),
+        valor_pago: remote.valor_pago != null ? Number(remote.valor_pago) : updated.valor_pago
+      };
+      
+      // Update local storage with remote merged confirmation
+      const freshList = getLocalAccounts();
+      const freshIdx = freshList.findIndex(a => a.id === id);
+      if (freshIdx >= 0) {
+        freshList[freshIdx] = mergedRemote;
+      } else {
+        freshList.unshift(mergedRemote);
+      }
+      saveLocalAccounts(freshList);
+      return mergedRemote;
+    }
+    return updated;
   } catch (e) {
-    console.warn('[accountsPayableService] Exceção ao atualizar no Supabase:', e);
+    console.error('[accountsPayableService] Exceção ao atualizar no Supabase:', e);
     return updated;
   }
 }

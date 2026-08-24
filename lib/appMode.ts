@@ -1,13 +1,26 @@
+import { isSupabaseConfigured } from './supabase';
+
 export type AppMode = 'PRODUCTION' | 'DEMO';
 
 export function getAppMode(): AppMode {
-  if (typeof window === 'undefined') return 'PRODUCTION';
-  const stored = localStorage.getItem('app_mode');
-  return stored === 'DEMO' ? 'DEMO' : 'PRODUCTION';
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('app_mode');
+    if (saved === 'DEMO') return 'DEMO';
+    if (saved === 'PRODUCTION') {
+      if (!isSupabaseConfigured()) {
+        return 'DEMO';
+      }
+      return 'PRODUCTION';
+    }
+  }
+  if (!isSupabaseConfigured()) {
+    return 'DEMO';
+  }
+  return 'PRODUCTION';
 }
 
 export function isDemoMode(): boolean {
-  return getAppMode() === 'DEMO';
+  return getAppMode() === 'DEMO' || !isSupabaseConfigured();
 }
 
 export function setAppMode(mode: AppMode) {
@@ -16,3 +29,4 @@ export function setAppMode(mode: AppMode) {
     window.dispatchEvent(new CustomEvent('app_mode_changed', { detail: { mode } }));
   }
 }
+
