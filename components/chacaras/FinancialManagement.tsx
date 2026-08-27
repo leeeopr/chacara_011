@@ -26,13 +26,26 @@ import {
   ShieldCheck,
   Wallet,
   Layers,
-  Sparkles
+  Sparkles,
+  Landmark
 } from 'lucide-react';
 import { Chacara, Client, Reservation } from '@/lib/chacaraTypes';
 import { getGlobalFinancialData, GlobalFinancialMetrics } from '@/services/financialService';
 import { getChacaras } from '@/services/chacarasService';
 import { getClients } from '@/services/clientsService';
+import { 
+  getFinancialSettings, 
+  saveFinancialSettings, 
+  subscribeToFinancialSettingsUpdates 
+} from '@/services/financialSettingsService';
+import { 
+  ChacaraFinancialSettings, 
+  DEFAULT_FINANCIAL_SETTINGS, 
+  validateFinancialPercent 
+} from '@/lib/financialSettingsTypes';
 import ReservationDetailModal from './ReservationDetailModal';
+import OpenFinanceModal from '../OpenFinanceModal';
+import { Sliders, Wrench, Check, X } from 'lucide-react';
 
 const FINANCIAL_STATUS_BADGES: Record<string, { label: string; bg: string; text: string }> = {
   EM_ABERTO: { label: 'Em Aberto', bg: 'bg-amber-500/20 border-amber-500/30', text: 'text-amber-400' },
@@ -58,17 +71,69 @@ export default function FinancialManagement() {
   const [selectedMethod, setSelectedMethod] = useState('TODAS');
   const [searchTerm, setSearchTerm] = useState('');
 
+  // Financial Settings State
+  const [finSettings, setFinSettings] = useState<ChacaraFinancialSettings>(DEFAULT_FINANCIAL_SETTINGS);
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [editEmergPercent, setEditEmergPercent] = useState<number>(20);
+  const [editMaintPercent, setEditMaintPercent] = useState<number>(15);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+
   // Selected reservation for modal view
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isOpenFinanceModalOpen, setIsOpenFinanceModalOpen] = useState(false);
 
   useEffect(() => {
     loadFilterOptions();
+    loadFinancialSettingsData();
+
+    const unsubscribe = subscribeToFinancialSettingsUpdates((updated) => {
+      setFinSettings(updated);
+      setEditEmergPercent(updated.emergency_reserve_percent);
+      setEditMaintPercent(updated.maintenance_percent);
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
     loadFinancialReport();
+    loadFinancialSettingsData();
   }, [startDate, endDate, selectedChacara, selectedClient, selectedStatus, selectedMethod]);
+
+  const loadFinancialSettingsData = async () => {
+    try {
+      const current = await getFinancialSettings(selectedChacara === 'TODAS' ? null : selectedChacara);
+      setFinSettings(current);
+      setEditEmergPercent(current.emergency_reserve_percent);
+      setEditMaintPercent(current.maintenance_percent);
+    } catch (e) {
+      console.warn('Erro ao carregar configurações financeiras:', e);
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    setIsSavingSettings(true);
+    try {
+      const validatedEmerg = validateFinancialPercent(editEmergPercent);
+      const validatedMaint = validateFinancialPercent(editMaintPercent);
+
+      const saved = await saveFinancialSettings({
+        chacara_id: selectedChacara === 'TODAS' ? null : selectedChacara,
+        emergency_reserve_percent: validatedEmerg,
+        maintenance_percent: validatedMaint
+      });
+
+      setFinSettings(saved);
+      setIsConfigModalOpen(false);
+    } catch (e) {
+      console.error('Erro ao salvar percentuais:', e);
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
 
   const loadFilterOptions = async () => {
     try {
@@ -116,20 +181,29 @@ export default function FinancialManagement() {
     return clientName.includes(term) || code.includes(term) || chacaraName.includes(term);
   });
 
-  // Cálculos de Reserva de Emergência (25%)
+  // Cálculos de Reserva de Emergência e Mínimo Circulável com base nos percentuais configurados
   const receitaRecebida = data?.receitaRecebida || 0;
   const receitaPendente = data?.receitaPendente || 0;
   const receitaPrevista = data?.receitaPrevista || 0; // Receita especulada total = recebido + pendente
 
-  // 1. Reserva baseada na Receita Recebida (25% dos pagamentos liquidados)
-  const reservaEmergenciaRecebida = Math.round(receitaRecebida * 0.25 * 100) / 100;
+  const emergPercentRatio = (finSettings.emergency_reserve_percent || 0) / 100;
+  const maintPercentRatio = (finSettings.maintenance_percent || 0) / 100;
 
-  // 2. Reserva com base na Receita Especulada (25% da receita total contratada)
-  const reservaEmergenciaEspeculada = Math.round(receitaPrevista * 0.25 * 100) / 100;
-  const reservaEmergenciaPendente = Math.round(receitaPendente * 0.25 * 100) / 100;
+  // 1. Reserva de Emergência baseada na Receita Recebida (% configurado)
+  const reservaEmergenciaRecebida = Math.round(receitaRecebida * emergPercentRatio * 100) / 100;
+
+  // 2. Reserva de Emergência com base na Receita Especulada (% configurado)
+  const reservaEmergenciaEspeculada = Math.round(receitaPrevista * emergPercentRatio * 100) / 100;
+  const reservaEmergenciaPendente = Math.round(receitaPendente * emergPercentRatio * 100) / 100;
   const taxaIntegralizacao = reservaEmergenciaEspeculada > 0
     ? Math.min(100, Math.round((reservaEmergenciaRecebida / reservaEmergenciaEspeculada) * 100))
     : (reservaEmergenciaRecebida > 0 ? 100 : 0);
+
+  // 3. Mínimo Circulável para Manutenção (% configurado)
+  const minimoCirculavelRecebido = Math.round(receitaRecebida * maintPercentRatio * 100) / 100;
+
+  // 4. Saldo Real Atual Disponível = Total Comprovado - Reserva de Emergência - Mínimo Circulável
+  const saldoRealAtual = Math.max(0, Math.round((receitaRecebida - reservaEmergenciaRecebida - minimoCirculavelRecebido) * 100) / 100);
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
@@ -140,6 +214,9 @@ export default function FinancialManagement() {
             <span className="px-2.5 py-0.5 rounded-full bg-[#FFD600]/20 text-[#FFD600] text-[10px] font-black uppercase tracking-widest border border-[#FFD600]/30">
               Fase 4 • Gestão Financeira
             </span>
+            <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-black uppercase tracking-widest border border-emerald-500/30">
+              Reserva: {finSettings.emergency_reserve_percent}% • Manutenção: {finSettings.maintenance_percent}%
+            </span>
           </div>
           <h1 className="text-2xl font-black tracking-tight text-white mt-1">
             Módulo Financeiro Geral
@@ -149,13 +226,31 @@ export default function FinancialManagement() {
           </p>
         </div>
 
-        <button
-          onClick={loadFinancialReport}
-          className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-white font-bold text-xs rounded-xl border border-white/10 flex items-center gap-2 transition-all self-start md:self-auto"
-        >
-          <Clock size={16} className="text-[#FFD600]" />
-          <span>Atualizar Relatório</span>
-        </button>
+        <div className="flex items-center gap-3 self-start md:self-auto flex-wrap">
+          <button
+            onClick={() => setIsConfigModalOpen(true)}
+            className="px-4 py-2.5 bg-[#FFD600]/10 hover:bg-[#FFD600]/20 text-[#FFD600] border border-[#FFD600]/30 font-black text-xs rounded-xl flex items-center gap-2 transition-all cursor-pointer shadow-lg shadow-[#FFD600]/5"
+          >
+            <Sliders size={16} />
+            <span>Configurar Percentuais ({finSettings.emergency_reserve_percent}% / {finSettings.maintenance_percent}%)</span>
+          </button>
+
+          <button
+            onClick={() => setIsOpenFinanceModalOpen(true)}
+            className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-500/20 transition-all cursor-pointer"
+          >
+            <Landmark size={16} />
+            <span>Conectar Banco (Pluggy Open Finance)</span>
+          </button>
+
+          <button
+            onClick={() => { loadFinancialReport(); loadFinancialSettingsData(); }}
+            className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-white font-bold text-xs rounded-xl border border-white/10 flex items-center gap-2 transition-all"
+          >
+            <Clock size={16} className="text-[#FFD600]" />
+            <span>Atualizar</span>
+          </button>
+        </div>
       </div>
 
       {/* Main KPI Cards Grid */}
@@ -221,9 +316,9 @@ export default function FinancialManagement() {
         </div>
       </div>
 
-      {/* Cards de Reserva de Emergência (25%) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Card 1: Reserva de Emergência com base na Receita Recebida (25%) */}
+      {/* Cards de Reserva de Emergência e Mínimo Circulável (Configuráveis) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Card 1: Reserva de Emergência (% configurado) */}
         <div className="p-5 bg-gradient-to-br from-[#0A0F2C] to-[#0d1642] border border-emerald-500/30 rounded-3xl space-y-3 relative overflow-hidden shadow-xl">
           <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none" />
           
@@ -234,97 +329,120 @@ export default function FinancialManagement() {
               </div>
               <div>
                 <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 block">
-                  Reserva de Emergência • Receita Recebida
+                  Reserva de Emergência
                 </span>
                 <span className="text-xs font-bold text-white/70">
-                  25% dos Pagamentos Liquidados
+                  {finSettings.emergency_reserve_percent}% dos Pagamentos Recebidos
                 </span>
               </div>
             </div>
-            <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[10px] font-black uppercase tracking-wider">
-              25% Efetivo
-            </span>
+            <button
+              onClick={() => setIsConfigModalOpen(true)}
+              className="px-2.5 py-1 rounded-full bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-300 text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer"
+            >
+              <span>{finSettings.emergency_reserve_percent}% Efetivo</span>
+              <Sliders size={10} />
+            </button>
           </div>
 
           <div className="pt-1">
-            <div className="text-2xl sm:text-3xl font-black text-emerald-400 tracking-tight">
+            <div className="text-2xl font-black text-emerald-400 tracking-tight">
               R$ {reservaEmergenciaRecebida.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </div>
             <p className="text-[11px] text-white/50 mt-1 leading-relaxed">
-              Valor preventivo já garantido pelo volume financeiro efetivamente creditado e confirmado em conta.
+              Valor de segurança retido sobre o total efetivamente creditado.
             </p>
           </div>
 
           <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[11px]">
-            <span className="text-white/40">Base de Cálculo (Recebida):</span>
+            <span className="text-white/40">Base Recebida:</span>
             <span className="font-bold text-white">
               R$ {receitaRecebida.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </span>
           </div>
         </div>
 
-        {/* Card 2: Reserva de Emergência com base na Receita Especulada (25%) */}
-        <div className="p-5 bg-gradient-to-br from-[#0A0F2C] to-[#0f1738] border border-[#FFD600]/30 rounded-3xl space-y-3 relative overflow-hidden shadow-xl">
+        {/* Card 2: Mínimo Circulável para Manutenção (% configurado) */}
+        <div className="p-5 bg-gradient-to-br from-[#0A0F2C] to-[#121638] border border-blue-500/30 rounded-3xl space-y-3 relative overflow-hidden shadow-xl">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-2xl pointer-events-none" />
+          
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                <Wrench size={20} />
+              </div>
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-blue-400 block">
+                  Mínimo Circulável Manutenção
+                </span>
+                <span className="text-xs font-bold text-white/70">
+                  {finSettings.maintenance_percent}% do Caixa Comprovado
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsConfigModalOpen(true)}
+              className="px-2.5 py-1 rounded-full bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 text-blue-300 text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer"
+            >
+              <span>{finSettings.maintenance_percent}% Fixo</span>
+              <Sliders size={10} />
+            </button>
+          </div>
+
+          <div className="pt-1">
+            <div className="text-2xl font-black text-blue-400 tracking-tight">
+              R$ {minimoCirculavelRecebido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </div>
+            <p className="text-[11px] text-white/50 mt-1 leading-relaxed">
+              Fundo operacional de giro reservado exclusivamente para manutenções preventivas e corretivas.
+            </p>
+          </div>
+
+          <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[11px]">
+            <span className="text-white/40">Destinação:</span>
+            <span className="font-bold text-blue-300">
+              Operação & Manutenção
+            </span>
+          </div>
+        </div>
+
+        {/* Card 3: Saldo Real Atual Disponível */}
+        <div className="p-5 bg-gradient-to-br from-[#0A0F2C] to-[#1a1705] border border-[#FFD600]/30 rounded-3xl space-y-3 relative overflow-hidden shadow-xl">
           <div className="absolute top-0 right-0 w-32 h-32 bg-[#FFD600]/5 rounded-full blur-2xl pointer-events-none" />
 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="p-2 rounded-xl bg-[#FFD600]/10 border border-[#FFD600]/20 text-[#FFD600]">
-                <ShieldAlert size={20} />
+                <Wallet size={20} />
               </div>
               <div>
                 <span className="text-[10px] font-black uppercase tracking-wider text-[#FFD600] block">
-                  Reserva de Emergência • Receita Especulada
+                  Saldo Real Atual Líquido
                 </span>
                 <span className="text-xs font-bold text-white/70">
-                  25% do Total Contratado (Recebido + A Receber)
+                  Total − Reserva ({finSettings.emergency_reserve_percent}%) − Manut. ({finSettings.maintenance_percent}%)
                 </span>
               </div>
             </div>
             <span className="px-2.5 py-1 rounded-full bg-[#FFD600]/20 border border-[#FFD600]/30 text-[#FFD600] text-[10px] font-black uppercase tracking-wider">
-              25% Global
+              Disponível
             </span>
           </div>
 
           <div className="pt-1">
-            <div className="text-2xl sm:text-3xl font-black text-[#FFD600] tracking-tight">
-              R$ {reservaEmergenciaEspeculada.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            <div className="text-2xl font-black text-[#FFD600] tracking-tight">
+              R$ {saldoRealAtual.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </div>
             <p className="text-[11px] text-white/50 mt-1 leading-relaxed">
-              Provisão patrimonial máxima estimada considerando todas as reservas ativas (liquidadas e futuras).
+              Margem livre utilizável para novas compras, benfeitorias e investimentos sem comprometer a operação.
             </p>
           </div>
 
-          {/* Subdivisão Recebido vs A Receber */}
-          <div className="pt-2 border-t border-white/10 space-y-2">
-            <div className="grid grid-cols-2 gap-2 text-[11px]">
-              <div className="bg-white/5 p-2 rounded-xl border border-white/5">
-                <span className="text-emerald-400/80 block text-[10px] uppercase font-bold">Já Integralizado (25%)</span>
-                <span className="font-black text-emerald-400 text-xs">
-                  R$ {reservaEmergenciaRecebida.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                </span>
-              </div>
-              <div className="bg-white/5 p-2 rounded-xl border border-white/5">
-                <span className="text-amber-400/80 block text-[10px] uppercase font-bold">A Integralizar (25%)</span>
-                <span className="font-black text-amber-400 text-xs">
-                  R$ {reservaEmergenciaPendente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                </span>
-              </div>
-            </div>
-
-            {/* Barra de Progresso de Integralização */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-[10px] text-white/40">
-                <span>Progresso da Integralização</span>
-                <span className="font-bold text-[#FFD600]">{taxaIntegralizacao}%</span>
-              </div>
-              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-emerald-500 to-[#FFD600] transition-all duration-500 rounded-full"
-                  style={{ width: `${taxaIntegralizacao}%` }}
-                />
-              </div>
-            </div>
+          <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[11px]">
+            <span className="text-white/40">Receita Prevista Total:</span>
+            <span className="font-bold text-white/80">
+              R$ {receitaPrevista.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            </span>
           </div>
         </div>
       </div>
@@ -634,6 +752,15 @@ export default function FinancialManagement() {
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
         onUpdate={loadFinancialReport}
+      />
+
+      {/* Open Finance (Pluggy Connect) Modal */}
+      <OpenFinanceModal
+        isOpen={isOpenFinanceModalOpen}
+        onClose={() => setIsOpenFinanceModalOpen(false)}
+        onSuccess={() => {
+          loadFinancialReport();
+        }}
       />
     </div>
   );

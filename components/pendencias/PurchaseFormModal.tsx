@@ -56,7 +56,8 @@ interface PurchaseFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   purchaseToEdit?: HousePurchase | null;
-  onSuccess: () => void;
+  onSuccess?: () => void;
+  onSaved?: () => void;
   initialChacaraId?: string;
   initialTaskId?: string;
 }
@@ -82,6 +83,7 @@ export default function PurchaseFormModal({
   onClose,
   purchaseToEdit,
   onSuccess,
+  onSaved,
   initialChacaraId,
   initialTaskId
 }: PurchaseFormModalProps) {
@@ -422,7 +424,12 @@ export default function PurchaseFormModal({
       window.dispatchEvent(new CustomEvent('purchases-updated'));
       window.dispatchEvent(new CustomEvent('pendencias-updated'));
 
-      onSuccess();
+      if (typeof onSuccess === 'function') {
+        onSuccess();
+      }
+      if (typeof onSaved === 'function') {
+        onSaved();
+      }
       onClose();
     } catch (err: any) {
       console.error('Erro ao salvar item de compra:', err);

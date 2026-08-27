@@ -251,32 +251,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               });
             }
           } else {
-            const isUnconfigured = !process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-            if (isUnconfigured) {
-              const demoUser = {
-                id: 'demo-admin-id',
-                app_metadata: {},
-                user_metadata: { full_name: 'Administrador Demo' },
-                aud: 'authenticated',
-                created_at: new Date().toISOString(),
-                email: 'admin@chacara.com',
-                role: 'authenticated',
-                updated_at: new Date().toISOString(),
-              } as User;
-
-              const demoProfile: UserProfile = {
-                id: 'demo-admin-id',
-                email: 'admin@chacara.com',
-                full_name: 'Administrador Demo',
-                role: 'admin',
-              };
-
-              setUser(demoUser);
-              setProfile(demoProfile);
-            } else {
-              setProfile(null);
-              clearPermissionsCache();
-            }
+            setUser(null);
+            setProfile(null);
+            clearPermissionsCache();
           }
         } catch (error) {
           console.error('[Auth] Exception in onAuthStateChange callback:', error);
@@ -357,12 +334,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     console.log('[Auth] Signing out...');
     clearPermissionsCache();
-    if (isDemoMode()) {
-      setAppMode('PRODUCTION');
-      setUser(null);
-      setProfile(null);
-    } else {
+    setAppMode('PRODUCTION');
+    setUser(null);
+    setProfile(null);
+    setSession(null);
+    try {
       await supabase.auth.signOut();
+    } catch (e) {
+      console.warn('[Auth] Sign out error:', e);
     }
     router.push('/login');
   };

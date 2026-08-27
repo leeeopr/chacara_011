@@ -22,6 +22,7 @@ import {
   StaffUnavailability,
   getEffectiveReservationPrice
 } from '@/lib/chacaraTypes';
+import { ChacaraFinancialSettings, DEFAULT_FINANCIAL_SETTINGS, validateFinancialPercent } from './financialSettingsTypes';
 import { 
   DEMO_CHACARAS, 
   DEMO_CLIENTS, 
@@ -55,6 +56,7 @@ interface DemoDataStore {
   operationalRecurrenceRules: OperationalRecurrenceRule[];
   operationalEvents: OperationalEvent[];
   staffUnavailability: StaffUnavailability[];
+  financialSettings?: ChacaraFinancialSettings[];
 }
 
 let inMemoryStore: DemoDataStore | null = null;
@@ -111,7 +113,18 @@ function initializeDefaultStore(): DemoDataStore {
     operationalEventTypes: operationalEventTypes || [],
     operationalRecurrenceRules: operationalRecurrenceRules || [],
     operationalEvents: operationalEvents || [],
-    staffUnavailability: staffUnavailability || []
+    staffUnavailability: staffUnavailability || [],
+    financialSettings: [
+      {
+        id: 'fin-set-default',
+        chacara_id: null,
+        chacara_nome: 'Configuração Padrão (Global)',
+        emergency_reserve_percent: 20,
+        maintenance_percent: 15,
+        notes: 'Percentuais padrão do sistema',
+        updated_at: new Date().toISOString()
+      }
+    ]
   };
 }
 
@@ -129,6 +142,19 @@ function ensureStoreFields(store: DemoDataStore) {
   if (!Array.isArray(store.refunds)) store.refunds = [];
   if (!store.deposits) store.deposits = {};
   if (!Array.isArray(store.crewAuditLogs)) store.crewAuditLogs = [];
+  if (!Array.isArray(store.financialSettings) || store.financialSettings.length === 0) {
+    store.financialSettings = [
+      {
+        id: 'fin-set-default',
+        chacara_id: null,
+        chacara_nome: 'Configuração Padrão (Global)',
+        emergency_reserve_percent: 20,
+        maintenance_percent: 15,
+        notes: 'Percentuais padrão do sistema',
+        updated_at: new Date().toISOString()
+      }
+    ];
+  }
   if (!Array.isArray(store.operationalEventTypes)) store.operationalEventTypes = JSON.parse(JSON.stringify(DEMO_OPERATIONAL_EVENT_TYPES));
   if (!Array.isArray(store.operationalRecurrenceRules)) {
     store.operationalRecurrenceRules = [];
@@ -1716,6 +1742,72 @@ export const demoRepository = {
     store.staffUnavailability.push(newItem);
     saveStore(store);
     return newItem;
+  },
+
+  async getAllFinancialSettings(): Promise<ChacaraFinancialSettings[]> {
+    const store = getStore();
+    return store.financialSettings || [DEFAULT_FINANCIAL_SETTINGS];
+  },
+
+  async getFinancialSettings(chacaraId?: string | null): Promise<ChacaraFinancialSettings> {
+    const store = getStore();
+    const settingsList = store.financialSettings || [];
+    
+    if (chacaraId && chacaraId !== 'ALL' && chacaraId !== 'GENERAL') {
+      const found = settingsList.find(s => s.chacara_id === chacaraId);
+      if (found) return found;
+    }
+
+    const defaultFound = settingsList.find(s => s.chacara_id === null || s.chacara_id === undefined);
+    return defaultFound || DEFAULT_FINANCIAL_SETTINGS;
+  },
+
+  async saveFinancialSettings(settings: {
+    chacara_id?: string | null;
+    emergency_reserve_percent: number;
+    maintenance_percent: number;
+    notes?: string;
+  }): Promise<ChacaraFinancialSettings> {
+    const store = getStore();
+    if (!store.financialSettings) store.financialSettings = [];
+
+    const targetChacaraId = settings.chacara_id && settings.chacara_id !== 'ALL' && settings.chacara_id !== 'GENERAL' 
+      ? settings.chacara_id 
+      : null;
+
+    const validatedEmerg = validateFinancialPercent(settings.emergency_reserve_percent);
+    const validatedMaint = validateFinancialPercent(settings.maintenance_percent);
+
+    let chacaraNome = 'Configuração Padrão (Global)';
+    if (targetChacaraId) {
+      const c = store.chacaras.find(ch => ch.id === targetChacaraId);
+      chacaraNome = c?.name || 'Chácara Selecionada';
+    }
+
+    const existingIdx = store.financialSettings.findIndex(s => 
+      targetChacaraId ? s.chacara_id === targetChacaraId : (s.chacara_id === null || s.chacara_id === undefined)
+    );
+
+    const now = new Date().toISOString();
+    const updatedRecord: ChacaraFinancialSettings = {
+      id: existingIdx >= 0 ? store.financialSettings[existingIdx].id : `fin-set-${Date.now()}`,
+      chacara_id: targetChacaraId,
+      chacara_nome: chacaraNome,
+      emergency_reserve_percent: validatedEmerg,
+      maintenance_percent: validatedMaint,
+      notes: settings.notes || '',
+      updated_at: now,
+      created_at: existingIdx >= 0 ? (store.financialSettings[existingIdx].created_at || now) : now
+    };
+
+    if (existingIdx >= 0) {
+      store.financialSettings[existingIdx] = updatedRecord;
+    } else {
+      store.financialSettings.push(updatedRecord);
+    }
+
+    saveStore(store);
+    return updatedRecord;
   }
 };
 

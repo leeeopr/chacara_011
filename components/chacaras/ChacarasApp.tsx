@@ -11,7 +11,8 @@ import {
   Users, 
   Sparkles,
   RotateCcw,
-  LogOut
+  LogOut,
+  Landmark
 } from 'lucide-react';
 import { useAppMode } from '@/contexts/AppModeContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -28,6 +29,7 @@ import PendenciasManagement from '../pendencias/PendenciasManagement';
 import PlanningManagement from './planning/PlanningManagement';
 import AccountsPayableManagement from './accounts-payable/AccountsPayableManagement';
 import ChacarasSettings from './ChacarasSettings';
+import OpenFinanceModal from '../OpenFinanceModal';
 
 
 import ChacaraFormModal from './ChacaraFormModal';
@@ -74,6 +76,7 @@ export default function ChacarasApp() {
   const [isPendenciaGroupModalOpen, setIsPendenciaGroupModalOpen] = useState(false);
   const [isDecisionModalOpen, setIsDecisionModalOpen] = useState(false);
   const [isAccountPayableModalOpen, setIsAccountPayableModalOpen] = useState(false);
+  const [isOpenFinanceModalOpen, setIsOpenFinanceModalOpen] = useState(false);
 
   // Contextual modal pre-selection
   const [contextChacaraId, setContextChacaraId] = useState<string | undefined>(undefined);
@@ -212,7 +215,16 @@ export default function ChacarasApp() {
           </div>
 
           {/* Quick Header Actions */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              onClick={() => setIsOpenFinanceModalOpen(true)}
+              className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold py-2 px-3 sm:px-3.5 rounded-xl transition-all flex items-center gap-1.5 text-xs cursor-pointer shadow-sm"
+              title="Conectar Banco via Open Finance (Pluggy)"
+            >
+              <Landmark size={15} />
+              <span className="hidden md:inline">Open Finance</span>
+            </button>
+
             <NotificationBellDropdown onNavigate={(tab) => setActiveTab(tab as TabType)} />
 
             <button
@@ -411,6 +423,15 @@ export default function ChacarasApp() {
         isOpen={isAccountPayableModalOpen}
         onClose={() => setIsAccountPayableModalOpen(false)}
         onSuccess={handleTriggerRefresh}
+      />
+
+      {/* Global Open Finance Modal */}
+      <OpenFinanceModal
+        isOpen={isOpenFinanceModalOpen}
+        onClose={() => setIsOpenFinanceModalOpen(false)}
+        onSuccess={() => {
+          handleTriggerRefresh();
+        }}
       />
     </div>
   );

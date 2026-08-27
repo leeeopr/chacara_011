@@ -2,56 +2,59 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  ShoppingBag,
   Plus,
   Search,
   Filter,
-  DollarSign,
-  AlertTriangle,
-  Lock,
-  Unlock,
   CheckCircle2,
   Clock,
-  Flame,
-  ArrowRight,
-  TreePine,
-  User,
-  Tag,
-  Building2,
-  Trash2,
-  Edit,
-  Check,
-  X,
-  TrendingUp,
-  RotateCcw,
-  Sparkles,
-  Link2,
-  ListFilter,
+  AlertTriangle,
+  Lock,
+  DollarSign,
+  TrendingDown,
+  ShoppingBag,
   ExternalLink,
-  Camera,
+  Edit2,
+  Trash2,
+  Check,
+  ChevronDown,
+  Sparkles,
+  TreePine,
   Image as ImageIcon,
-  Star,
-  Globe
+  Camera,
+  Layers,
+  ArrowRight,
+  ShieldCheck,
+  XCircle,
+  HelpCircle,
+  RotateCcw
 } from 'lucide-react';
 import {
   HousePurchase,
-  PurchasePriority,
   PurchaseStatus,
+  PurchasePriority,
   PurchaseCategory,
-  PurchaseFilters,
   PurchaseStats,
   PurchaseImage
 } from '@/lib/purchasesTypes';
+import {
+  PurchaseViabilityVerdict,
+  PurchaseViabilityAnalysis,
+  PurchaseViabilityGlobalSummary
+} from '@/lib/purchaseViabilityTypes';
 import {
   getHousePurchases,
   deleteHousePurchase,
   markPurchaseAsBought,
   computePurchasesStats
 } from '@/services/purchasesService';
+import { calculatePurchasesViability, getMaintenancePercentConfig } from '@/services/purchaseViabilityService';
 import { getChacaras } from '@/services/chacarasService';
 import { Chacara } from '@/lib/chacaraTypes';
+import { formatCurrency } from '@/lib/utils';
 import PurchaseFormModal from './PurchaseFormModal';
 import PurchaseImageLightbox from './PurchaseImageLightbox';
+import PurchaseViabilityOverviewHeader from './PurchaseViabilityOverviewHeader';
+import PurchaseViabilityDetailModal from './PurchaseViabilityDetailModal';
 
 interface PurchasesManagementProps {
   onOpenTaskDetail?: (taskId: string) => void;
@@ -82,6 +85,14 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
   const [chacaras, setChacaras] = useState<Chacara[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Viability State
+  const [viabilitySummary, setViabilitySummary] = useState<PurchaseViabilityGlobalSummary | null>(null);
+  const [viabilityLoading, setViabilityLoading] = useState(false);
+  const [selectedViabilityFilter, setSelectedViabilityFilter] = useState<string>('');
+  const [purchaseForAnalysis, setPurchaseForAnalysis] = useState<HousePurchase | null>(null);
+  const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
+  const [configuredPercent, setConfiguredPercent] = useState<number>(20);
+
   // Active Tab & Filters
   const [activeTab, setActiveTab] = useState<PurchaseTab>('canBuyNow');
   const [selectedChacara, setSelectedChacara] = useState<string>('');
@@ -107,23 +118,41 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
   const [savingBought, setSavingBought] = useState(false);
 
   useEffect(() => {
+    setConfiguredPercent(getMainMaintenancePercent());
+  }, []);
+
+  const getMainMaintenancePercent = () => {
+    return getMaintenancePercentConfig();
+  };
+
+  useEffect(() => {
     loadData();
 
     const handlePurchasesUpdated = () => {
       loadData();
     };
 
+    const handleViabilityConfigUpdated = (e: any) => {
+      if (e.detail?.percent !== undefined) {
+        setConfiguredPercent(e.detail.percent);
+      }
+      loadData();
+    };
+
     window.addEventListener('purchases-updated', handlePurchasesUpdated);
     window.addEventListener('pendencias-updated', handlePurchasesUpdated);
+    window.addEventListener('viability-config-updated', handleViabilityConfigUpdated);
 
     return () => {
       window.removeEventListener('purchases-updated', handlePurchasesUpdated);
       window.removeEventListener('pendencias-updated', handlePurchasesUpdated);
+      window.removeEventListener('viability-config-updated', handleViabilityConfigUpdated);
     };
-  }, [activeTab, selectedChacara, selectedPriority, selectedCategory, searchQuery]);
+  }, [activeTab, selectedChacara, selectedPriority, selectedCategory, searchQuery, configuredPercent]);
 
   const loadData = async () => {
     setLoading(true);
+    setViabilityLoading(true);
     try {
       const [chList, purList] = await Promise.all([
         getChacaras(),
@@ -138,10 +167,22 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
 
       setChacaras(chList);
       setPurchases(purList);
+
+      // Calcular Viabilidade Financeira em tempo real com base no Saldo Real e Mínimo Circulável
+      try {
+        const viab = await calculatePurchasesViability(purList, {
+          chacaraId: selectedChacara || undefined,
+          percentualManutencao: configuredPercent
+        });
+        setViabilitySummary(viab);
+      } catch (err) {
+        console.warn('Erro ao calcular viabilidade de compras:', err);
+      }
     } catch (e) {
       console.warn('Erro ao carregar compras:', e);
     } finally {
       setLoading(false);
+      setViabilityLoading(false);
     }
   };
 
@@ -164,6 +205,29 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
     return active.sort((a, b) => (order[a.priority] || 99) - (order[b.priority] || 99)).slice(0, 5);
   }, [purchases]);
 
+  // Filtragem combinada considerando filtro de viabilidade do Motor
+  const displayedPurchases = useMemo(() => {
+    if (!selectedViabilityFilter || !viabilitySummary) {
+      return purchases;
+    }
+
+    return purchases.filter(item => {
+      const analysis = viabilitySummary.analysesByPurchaseId[item.id];
+      if (!analysis) return true;
+
+      if (selectedViabilityFilter === 'VIAVEL') {
+        return analysis.verdict === 'VIAVEL';
+      }
+      if (selectedViabilityFilter === 'NAO_VIAVEL') {
+        return analysis.verdict === 'NAO_VIAVEL';
+      }
+      if (selectedViabilityFilter === 'OUTROS') {
+        return analysis.verdict === 'AGUARDANDO_DEPENDENCIA' || analysis.verdict === 'DADOS_INSUFICIENTES';
+      }
+      return true;
+    });
+  }, [purchases, selectedViabilityFilter, viabilitySummary]);
+
   const handleOpenNew = () => {
     setPurchaseToEdit(null);
     setIsFormModalOpen(true);
@@ -172,6 +236,12 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
   const handleOpenEdit = (p: HousePurchase) => {
     setPurchaseToEdit(p);
     setIsFormModalOpen(true);
+  };
+
+  const handleOpenAnalysis = (p: HousePurchase, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setPurchaseForAnalysis(p);
+    setIsAnalysisModalOpen(true);
   };
 
   const handleOpenPhotoGallery = (p: HousePurchase, e?: React.MouseEvent) => {
@@ -189,22 +259,25 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
     setLightboxOpen(true);
   };
 
-  const handleDelete = async (id: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (!confirm('Deseja realmente remover esta compra?')) return;
+  const handleDelete = async (id: string, name: string) => {
+    if (!window.confirm(`Deseja realmente excluir a compra "${name}"?`)) {
+      return;
+    }
     try {
       await deleteHousePurchase(id);
-      loadData();
-      window.dispatchEvent(new CustomEvent('purchases-updated'));
+      await loadData();
     } catch (e) {
-      alert('Erro ao excluir item.');
+      alert('Erro ao excluir compra');
     }
   };
 
-  const handleInitiateMarkBought = (p: HousePurchase, e?: React.MouseEvent) => {
-    e?.stopPropagation();
+  const handleInitiateMarkBought = (p: HousePurchase) => {
     setItemToMarkBought(p);
-    setPaidPriceInput(p.paid_price || p.estimated_price || 0);
+    // Preenche com o valor real se já existir, senão com o valor estimado total
+    const initialPrice = p.paid_price && p.paid_price > 0 
+      ? p.paid_price 
+      : (p.estimated_price * (p.quantity || 1));
+    setPaidPriceInput(initialPrice);
     setSyncFinancialInput(true);
   };
 
@@ -212,18 +285,14 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
     if (!itemToMarkBought) return;
     setSavingBought(true);
     try {
-      await markPurchaseAsBought(
-        itemToMarkBought.id,
-        paidPriceInput,
-        syncFinancialInput,
-        itemToMarkBought.chacara_id
-      );
+      await markPurchaseAsBought(itemToMarkBought.id, {
+        paid_price: Number(paidPriceInput) || 0,
+        sync_to_financial: syncFinancialInput
+      });
       setItemToMarkBought(null);
-      loadData();
-      window.dispatchEvent(new CustomEvent('purchases-updated'));
-    } catch (e) {
-      console.error('Erro ao marcar como comprado:', e);
-      alert('Erro ao confirmar compra.');
+      await loadData();
+    } catch (e: any) {
+      alert('Erro ao registrar compra: ' + (e?.message || ''));
     } finally {
       setSavingBought(false);
     }
@@ -231,32 +300,27 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
 
   return (
     <div className="space-y-6">
-      {/* Header Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-zinc-900 border border-white/10 p-6 rounded-3xl">
-        <div className="flex items-center gap-4">
-          <div className="p-3.5 rounded-2xl bg-amber-400 text-zinc-950 shadow-lg shadow-amber-400/20 font-black">
-            <ShoppingBag size={28} />
+      {/* Top Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="p-2 rounded-xl bg-amber-400/10 text-amber-400 font-bold">
+              <ShoppingBag size={20} />
+            </span>
+            <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+              Gestão de Compras da Casa
+            </h1>
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-                Módulo de Compras das Chácaras
-              </h1>
-              <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold uppercase tracking-wider border border-amber-500/30">
-                Fase 2
-              </span>
-            </div>
-            <p className="text-xs text-white/60 mt-1">
-              Controle inteligente com prioridade, trava de dependências, galeria de fotos e fluxo financeiro.
-            </p>
-          </div>
+          <p className="text-xs text-white/50 mt-1">
+            Controle de itens necessários para as chácaras com viabilização financeira pelo Mínimo Circulável.
+          </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <button
-            onClick={loadData}
-            className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl transition-all cursor-pointer"
-            title="Atualizar lista"
+            onClick={() => loadData()}
+            className="p-3 bg-zinc-900 border border-white/10 hover:border-white/20 text-white rounded-xl transition-all cursor-pointer"
+            title="Atualizar compras e recalcular viabilidade"
           >
             <RotateCcw size={16} className={loading ? 'animate-spin text-amber-400' : 'text-white/70'} />
           </button>
@@ -270,6 +334,18 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
           </button>
         </div>
       </div>
+
+      {/* Top Viability Header */}
+      <PurchaseViabilityOverviewHeader
+        summary={viabilitySummary}
+        loading={viabilityLoading}
+        selectedViabilityFilter={selectedViabilityFilter}
+        onSelectViabilityFilter={setSelectedViabilityFilter}
+        onPercentChange={(newPct) => {
+          setConfiguredPercent(newPct);
+          loadData();
+        }}
+      />
 
       {/* Metric Cards Summary */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -302,17 +378,15 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
             <p className="text-[10px] text-rose-400/80 mt-0.5">Mais importantes (Prioridade 1)</p>
           </div>
           <div className="p-3 rounded-xl bg-rose-500/10 text-rose-400">
-            <Flame size={22} />
+            <AlertTriangle size={22} />
           </div>
         </div>
 
         <div className="bg-zinc-900 border border-white/10 p-4 rounded-2xl flex items-center justify-between">
           <div>
-            <p className="text-[11px] font-semibold text-white/50 uppercase">Previsão de Custo</p>
-            <p className="text-xl font-black text-amber-400 mt-1">
-              R$ {stats.pendingEstimated.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-            </p>
-            <p className="text-[10px] text-white/40 mt-0.5">Itens pendentes</p>
+            <p className="text-[11px] font-semibold text-white/50 uppercase">Total Estimado Pendente</p>
+            <p className="text-2xl font-black text-amber-400 mt-1">{formatCurrency(stats.totalEstimatedPending)}</p>
+            <p className="text-[10px] text-white/40 mt-0.5">{stats.totalPendingCount} itens pendentes</p>
           </div>
           <div className="p-3 rounded-xl bg-amber-500/10 text-amber-400">
             <DollarSign size={22} />
@@ -320,269 +394,316 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
         </div>
       </div>
 
-      {/* Tabs & Search Bar */}
-      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-zinc-900/60 p-2 border border-white/10 rounded-2xl">
-        <div className="flex items-center gap-1 overflow-x-auto pb-1 lg:pb-0 scrollbar-none">
-          <button
-            onClick={() => setActiveTab('canBuyNow')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-2 ${
-              activeTab === 'canBuyNow'
-                ? 'bg-amber-400 text-zinc-950 shadow-md shadow-amber-400/20'
-                : 'text-white/60 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Check size={14} />
-            Liberados ({stats.canBuyNowCount})
-          </button>
+      {/* Priority Action Deck: O que comprar agora */}
+      {actionList.length > 0 && activeTab === 'canBuyNow' && (
+        <div className="p-4 sm:p-5 rounded-3xl bg-zinc-900 border border-amber-400/30 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles size={16} className="text-amber-400" />
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                Prioridade Máxima — Comprar Primeiro
+              </h3>
+            </div>
+            <span className="text-[10px] text-amber-300 font-bold px-2 py-0.5 rounded-full bg-amber-400/10">
+              Ranking Inteligente
+            </span>
+          </div>
 
-          <button
-            onClick={() => setActiveTab('urgent')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-2 ${
-              activeTab === 'urgent'
-                ? 'bg-rose-500 text-white shadow-md shadow-rose-500/20'
-                : 'text-white/60 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Flame size={14} />
-            Urgentes ({stats.urgentCount})
-          </button>
-
-          <button
-            onClick={() => setActiveTab('blocked')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-2 ${
-              activeTab === 'blocked'
-                ? 'bg-purple-500 text-white shadow-md shadow-purple-500/20'
-                : 'text-white/60 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Lock size={14} />
-            Bloqueados ({stats.blockedCount})
-          </button>
-
-          <button
-            onClick={() => setActiveTab('allPending')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-              activeTab === 'allPending'
-                ? 'bg-white/10 text-white'
-                : 'text-white/60 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            Todos Pendentes
-          </button>
-
-          <button
-            onClick={() => setActiveTab('completed')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-              activeTab === 'completed'
-                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                : 'text-white/60 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            Comprados ({stats.completedCount})
-          </button>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            {actionList.map((item, idx) => {
+              const prio = PRIORITY_BADGES[item.priority] || PRIORITY_BADGES.NORMAL;
+              const itemViab = viabilitySummary?.analysesByPurchaseId[item.id];
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => handleOpenAnalysis(item)}
+                  className="p-3 rounded-2xl bg-zinc-950/80 border border-white/10 hover:border-amber-400/50 transition-all flex items-center justify-between group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="w-5 h-5 rounded-full bg-amber-400 text-zinc-950 text-xs font-black flex items-center justify-center shrink-0">
+                      {idx + 1}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-white truncate group-hover:text-amber-400 transition-colors">
+                        {item.product_name}
+                      </p>
+                      <div className="flex items-center gap-2 text-[10px] text-white/50 mt-0.5">
+                        <span className={`px-1.5 py-0.2 rounded font-bold ${prio.text}`}>
+                          {prio.label}
+                        </span>
+                        <span>•</span>
+                        <span>{item.chacara_nome || 'Geral'}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0 ml-2">
+                    <span className="text-xs font-black text-white block">
+                      {formatCurrency(item.paid_price && item.paid_price > 0 ? item.paid_price : (item.estimated_price * (item.quantity || 1)))}
+                    </span>
+                    {itemViab && (
+                      <span className={`text-[10px] font-bold ${itemViab.verdict === 'VIAVEL' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {itemViab.verdict === 'VIAVEL' ? '🟢 Viável' : '🔴 Não Viável'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
+      )}
 
-        {/* Search Input */}
-        <div className="relative min-w-[220px]">
-          <Search size={14} className="absolute left-3 top-3 text-white/40" />
+      {/* Tabs Navigation */}
+      <div className="flex items-center gap-2 border-b border-white/10 pb-3 overflow-x-auto scrollbar-none">
+        <button
+          onClick={() => { setActiveTab('canBuyNow'); setSelectedViabilityFilter(''); }}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center gap-2 ${
+            activeTab === 'canBuyNow'
+              ? 'bg-amber-400 text-zinc-950 shadow-md shadow-amber-400/20'
+              : 'text-white/60 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <CheckCircle2 size={15} />
+          Liberadas para Compra
+          <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+            activeTab === 'canBuyNow' ? 'bg-zinc-950 text-amber-400' : 'bg-white/10 text-white'
+          }`}>
+            {stats.canBuyNowCount}
+          </span>
+        </button>
+
+        <button
+          onClick={() => { setActiveTab('blocked'); setSelectedViabilityFilter(''); }}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center gap-2 ${
+            activeTab === 'blocked'
+              ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20'
+              : 'text-white/60 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <Lock size={15} />
+          Aguardando Dependência
+          <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+            activeTab === 'blocked' ? 'bg-zinc-950 text-purple-300' : 'bg-white/10 text-white'
+          }`}>
+            {stats.blockedCount}
+          </span>
+        </button>
+
+        <button
+          onClick={() => { setActiveTab('urgent'); setSelectedViabilityFilter(''); }}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center gap-2 ${
+            activeTab === 'urgent'
+              ? 'bg-rose-600 text-white shadow-md shadow-rose-600/20'
+              : 'text-white/60 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <AlertTriangle size={15} />
+          Infraestrutura / Urgentes
+          <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+            activeTab === 'urgent' ? 'bg-zinc-950 text-rose-300' : 'bg-white/10 text-white'
+          }`}>
+            {stats.urgentCount}
+          </span>
+        </button>
+
+        <button
+          onClick={() => { setActiveTab('allPending'); setSelectedViabilityFilter(''); }}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center gap-2 ${
+            activeTab === 'allPending'
+              ? 'bg-white/20 text-white'
+              : 'text-white/60 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          Todas Pendentes
+          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-white/10 text-white">
+            {stats.totalPendingCount}
+          </span>
+        </button>
+
+        <button
+          onClick={() => { setActiveTab('completed'); setSelectedViabilityFilter(''); }}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center gap-2 ${
+            activeTab === 'completed'
+              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+              : 'text-white/60 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          Já Compradas
+          <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+            activeTab === 'completed' ? 'bg-zinc-950 text-emerald-300' : 'bg-white/10 text-white'
+          }`}>
+            {stats.completedCount}
+          </span>
+        </button>
+      </div>
+
+      {/* Filter Bar */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Search */}
+        <div className="relative">
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" />
           <input
             type="text"
+            placeholder="Buscar por produto, local ou link..."
             value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Buscar por produto, loja..."
-            className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-amber-400"
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 bg-zinc-900 border border-white/10 rounded-2xl text-xs text-white placeholder-white/40 focus:outline-none focus:border-amber-400 transition-colors"
           />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-2.5 text-white/40 hover:text-white"
-            >
-              <X size={14} />
-            </button>
-          )}
         </div>
+
+        {/* Chácara Filter */}
+        <select
+          value={selectedChacara}
+          onChange={(e) => setSelectedChacara(e.target.value)}
+          className="px-3.5 py-2.5 bg-zinc-900 border border-white/10 rounded-2xl text-xs text-white focus:outline-none focus:border-amber-400 transition-colors cursor-pointer"
+        >
+          <option value="">Todas as Chácaras</option>
+          {chacaras.map(ch => (
+            <option key={ch.id} value={ch.id}>{ch.name}</option>
+          ))}
+        </select>
+
+        {/* Priority Filter */}
+        <select
+          value={selectedPriority}
+          onChange={(e) => setSelectedPriority(e.target.value)}
+          className="px-3.5 py-2.5 bg-zinc-900 border border-white/10 rounded-2xl text-xs text-white focus:outline-none focus:border-amber-400 transition-colors cursor-pointer"
+        >
+          <option value="">Todas as Prioridades</option>
+          <option value="INFRAESTRUTURA">Infraestrutura (Prio 1)</option>
+          <option value="ESTRUTURA">Estrutura (Prio 2)</option>
+          <option value="SUPERESTRUTURA">Superestrutura (Prio 3)</option>
+          <option value="URGENTE">Urgente</option>
+          <option value="ALTA">Alta</option>
+          <option value="NORMAL">Normal</option>
+          <option value="BAIXA">Baixa</option>
+        </select>
+
+        {/* Category Filter */}
+        <select
+          value={selectedCategory}
+          onChange={(e) => setSelectedCategory(e.target.value)}
+          className="px-3.5 py-2.5 bg-zinc-900 border border-white/10 rounded-2xl text-xs text-white focus:outline-none focus:border-amber-400 transition-colors cursor-pointer"
+        >
+          <option value="">Todas as Categorias</option>
+          <option value="Eletrodomésticos">Eletrodomésticos</option>
+          <option value="Cama, Mesa e Banho">Cama, Mesa e Banho</option>
+          <option value="Piscina e Lazer">Piscina e Lazer</option>
+          <option value="Utensílios de Cozinha">Utensílios de Cozinha</option>
+          <option value="Ferramentas e Manutenção">Ferramentas e Manutenção</option>
+          <option value="Decoração e Iluminação">Decoração e Iluminação</option>
+          <option value="Móveis">Móveis</option>
+          <option value="Segurança">Segurança</option>
+          <option value="Eletrônicos">Eletrônicos</option>
+          <option value="Outros">Outros</option>
+        </select>
       </div>
 
-      {/* Secondary Filter Dropdowns */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div>
-          <select
-            value={selectedChacara}
-            onChange={e => setSelectedChacara(e.target.value)}
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-          >
-            <option value="">Todas as Chácaras</option>
-            {chacaras.map(ch => (
-              <option key={ch.id} value={ch.id}>{ch.name}</option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <select
-            value={selectedPriority}
-            onChange={e => setSelectedPriority(e.target.value)}
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-          >
-            <option value="">Todas as Prioridades / Urgências</option>
-            <option value="INFRAESTRUTURA">🔴 1. Infraestrutura (Mais importante)</option>
-            <option value="ESTRUTURA">⚡ 2. Estrutura (Intermediário)</option>
-            <option value="SUPERESTRUTURA">🔹 3. Superestrutura (Menos importante)</option>
-            <option value="URGENTE">🔥 Urgente (Legado)</option>
-            <option value="ALTA">⚡ Alta (Legado)</option>
-            <option value="NORMAL">🔹 Normal (Legado)</option>
-            <option value="BAIXA">💤 Baixa (Legado)</option>
-          </select>
-        </div>
-
-        <div>
-          <select
-            value={selectedCategory}
-            onChange={e => setSelectedCategory(e.target.value)}
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-          >
-            <option value="">Todas as Categorias</option>
-            <option value="Manutenção">Manutenção</option>
-            <option value="Limpeza">Limpeza</option>
-            <option value="Cozinha">Cozinha</option>
-            <option value="Banheiro">Banheiro</option>
-            <option value="Jardim">Jardim</option>
-            <option value="Piscina">Piscina</option>
-            <option value="Eletrônicos">Eletrônicos</option>
-            <option value="Mobiliário">Mobiliário</option>
-            <option value="Segurança">Segurança</option>
-            <option value="Consumíveis">Consumíveis</option>
-            <option value="Outros">Outros</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Main Items Grid / List */}
+      {/* Purchases Grid / List */}
       {loading ? (
         <div className="py-20 flex flex-col items-center justify-center gap-3">
           <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
-          <p className="text-xs text-white/50">Carregando itens de compra do Supabase...</p>
+          <p className="text-xs text-white/50">Carregando itens de compra e auditando viabilidade financeira...</p>
         </div>
-      ) : purchases.length === 0 ? (
+      ) : displayedPurchases.length === 0 ? (
         <div className="py-16 text-center bg-zinc-900 border border-white/10 rounded-3xl space-y-3">
           <ShoppingBag size={36} className="mx-auto text-white/20" />
           <h3 className="text-sm font-bold text-white">Nenhum item encontrado</h3>
-          <p className="text-xs text-white/50">
-            Não há produtos cadastrados nesta categoria ou filtro.
+          <p className="text-xs text-white/50 max-w-sm mx-auto">
+            {selectedViabilityFilter
+              ? 'Nenhuma compra se enquadra no filtro de viabilidade selecionado.'
+              : 'Não há produtos cadastrados nesta categoria ou filtro.'}
           </p>
-          <button
-            onClick={handleOpenNew}
-            className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold text-xs rounded-xl inline-flex items-center gap-1.5 transition-all cursor-pointer"
-          >
-            <Plus size={16} />
-            Cadastrar Compra
-          </button>
+          {selectedViabilityFilter ? (
+            <button
+              onClick={() => setSelectedViabilityFilter('')}
+              className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-xl inline-flex items-center gap-1.5 transition-all cursor-pointer"
+            >
+              Limpar Filtro de Viabilidade
+            </button>
+          ) : (
+            <button
+              onClick={handleOpenNew}
+              className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold text-xs rounded-xl inline-flex items-center gap-1.5 transition-all cursor-pointer"
+            >
+              <Plus size={16} />
+              Cadastrar Compra
+            </button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {purchases.map(item => {
+          {displayedPurchases.map(item => {
             const prio = PRIORITY_BADGES[item.priority] || PRIORITY_BADGES.NORMAL;
             const st = STATUS_BADGES[item.status] || STATUS_BADGES.A_COMPRAR;
             const isBlocked = item.status === 'AGUARDANDO_DEPENDENCIA';
-            const primaryPhoto = item.primary_image_url || (item.images?.find(i => i.is_primary)?.public_url) || (item.images?.[0]?.public_url) || null;
+            const primaryPhoto = item.primary_image_url || (item.images && item.images[0]?.public_url);
             const photoCount = item.images_count || (item.images ? item.images.length : (primaryPhoto ? 1 : 0));
+            const viab = viabilitySummary?.analysesByPurchaseId[item.id];
 
             return (
               <div
                 key={item.id}
-                onClick={() => handleOpenEdit(item)}
-                className={`p-4 sm:p-5 rounded-3xl border transition-all flex flex-col justify-between space-y-3 cursor-pointer group hover:shadow-xl ${
+                className={`p-5 rounded-3xl border transition-all duration-200 flex flex-col justify-between space-y-4 group ${
                   isBlocked
                     ? 'bg-purple-950/20 border-purple-500/30 hover:border-purple-500/60'
                     : item.status === 'COMPRADO'
                     ? 'bg-zinc-950/50 border-white/5 opacity-80 hover:opacity-100 hover:border-white/20'
+                    : viab?.verdict === 'NAO_VIAVEL'
+                    ? 'bg-zinc-900 border-rose-500/30 hover:border-rose-500/60'
+                    : viab?.verdict === 'VIAVEL'
+                    ? 'bg-zinc-900 border-emerald-500/30 hover:border-emerald-500/60'
                     : 'bg-zinc-900 border-white/10 hover:border-amber-400/50'
                 }`}
               >
-                <div className="space-y-3">
-                  {/* 1. PHOTO SECTION DIRECTLY ON CARD */}
+                <div className="space-y-3.5">
+                  {/* Card Top: Badges */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${prio.bg} ${prio.text} ${prio.border}`}>
+                        {prio.label}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${st.bg} ${st.text}`}>
+                        {st.label}
+                      </span>
+                    </div>
+
+                    <span className="text-[10px] text-white/40 font-mono">
+                      Qtd: <strong className="text-white">{item.quantity} {item.unit}</strong>
+                    </span>
+                  </div>
+
+                  {/* 1. PHOTO COVER OR ATTACH CTA */}
                   {primaryPhoto ? (
                     <div
                       onClick={(e) => handleOpenPhotoGallery(item, e)}
-                      className="relative w-full h-44 rounded-2xl overflow-hidden border border-white/10 bg-black/40 group/photo cursor-pointer shadow-md shrink-0"
-                      title="Clique para abrir galeria e gerenciar fotos deste item"
+                      className="relative h-44 w-full rounded-2xl overflow-hidden bg-black/40 border border-white/10 group/cover cursor-pointer"
+                      title="Clique para ver fotos e orçamentos anexados"
                     >
                       <img
                         src={primaryPhoto}
                         alt={item.product_name}
-                        className="w-full h-full object-cover group-hover/photo:scale-105 transition-transform duration-300"
+                        className="w-full h-full object-cover group-hover/cover:scale-105 transition-transform duration-300"
                       />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 pointer-events-none" />
-
-                      {/* Floating Top Badges & Price over Photo */}
-                      <div className="absolute top-2.5 inset-x-2.5 flex items-center justify-between gap-2 z-10">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black border backdrop-blur-md shadow-sm ${prio.bg} ${prio.text} ${prio.border}`}>
-                            {prio.label}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent flex flex-col justify-between p-3">
+                        <div className="flex items-center justify-between">
+                          <span className="px-2 py-0.5 rounded-lg bg-black/60 backdrop-blur-md text-[10px] font-bold text-white/80 border border-white/10">
+                            {item.category}
                           </span>
-                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border backdrop-blur-md shadow-sm ${st.bg} ${st.text}`}>
-                            {st.label}
+                          <span className="px-2 py-0.5 rounded-lg bg-black/70 backdrop-blur-md text-[10px] font-bold text-amber-300 border border-amber-400/30 flex items-center gap-1">
+                            <ImageIcon size={11} />
+                            {photoCount} {photoCount === 1 ? 'foto' : 'fotos'}
                           </span>
                         </div>
 
-                        <div className="px-2.5 py-1 rounded-xl bg-black/80 backdrop-blur-md border border-white/15 text-right shadow-sm">
-                          {item.status === 'COMPRADO' ? (
-                            <span className="text-xs font-black text-emerald-400">
-                              R$ {(item.paid_price || item.estimated_price * item.quantity).toFixed(2)}
-                            </span>
-                          ) : (
-                            <span className="text-xs font-black text-amber-400">
-                              R$ {(item.estimated_price * item.quantity).toFixed(2)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Floating Bottom Photo Overlay Info */}
-                      <div className="absolute bottom-2.5 inset-x-2.5 flex items-center justify-between z-10 text-white text-[11px]">
-                        <span className="px-2 py-0.5 rounded-md bg-black/70 backdrop-blur-md text-white/90 border border-white/10 font-semibold text-[10px]">
-                          {item.quantity} {item.unit} • {item.category}
+                        <span className="text-[10px] text-white/70 bg-black/50 backdrop-blur-sm self-start px-2 py-0.5 rounded-md flex items-center gap-1 group-hover/cover:text-white">
+                          <Camera size={11} />
+                          Abrir Galeria
                         </span>
-                        {photoCount > 1 ? (
-                          <span className="px-2 py-0.5 rounded-md bg-black/80 backdrop-blur-md text-amber-300 font-bold border border-amber-400/30 flex items-center gap-1 text-[10px]">
-                            <Camera size={11} />
-                            +{photoCount} fotos
-                          </span>
-                        ) : (
-                          <span className="opacity-0 group-hover/photo:opacity-100 transition-opacity px-2 py-0.5 rounded-md bg-black/80 backdrop-blur-md text-white/90 font-medium flex items-center gap-1 text-[10px]">
-                            <Camera size={11} />
-                            Ver fotos
-                          </span>
-                        )}
                       </div>
                     </div>
                   ) : (
-                    <div className="space-y-2.5">
-                      {/* Top Badges & Price when no photo */}
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black border ${prio.bg} ${prio.text} ${prio.border}`}>
-                            {prio.label}
-                          </span>
-                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${st.bg} ${st.text}`}>
-                            {st.label}
-                          </span>
-                        </div>
-
-                        <div className="text-right">
-                          {item.status === 'COMPRADO' ? (
-                            <span className="text-xs font-black text-emerald-400">
-                              R$ {(item.paid_price || item.estimated_price * item.quantity).toFixed(2)}
-                            </span>
-                          ) : (
-                            <span className="text-xs font-black text-amber-400">
-                              R$ {(item.estimated_price * item.quantity).toFixed(2)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Clean Neutral Photo Upload Trigger Banner */}
+                    <div className="space-y-1">
                       <div
                         onClick={(e) => handleOpenPhotoGallery(item, e)}
                         className="w-full py-2.5 px-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.02] hover:bg-amber-400/5 hover:border-amber-400/40 flex items-center justify-between text-white/40 hover:text-amber-300 transition-all cursor-pointer group/addphoto"
@@ -617,6 +738,67 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
                     )}
                   </div>
 
+                  {/* 3. VIABILITY MOTOR BADGE & DIAGNOSIS BANNER */}
+                  {item.status !== 'COMPRADO' && viab && (
+                    <div
+                      onClick={(e) => handleOpenAnalysis(item, e)}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer space-y-2 group/viabcard ${
+                        viab.verdict === 'VIAVEL'
+                          ? 'bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/15'
+                          : viab.verdict === 'NAO_VIAVEL'
+                          ? 'bg-rose-500/10 border-rose-500/30 hover:bg-rose-500/15'
+                          : 'bg-purple-500/10 border-purple-500/30 hover:bg-purple-500/15'
+                      }`}
+                      title="Clique para ver o demonstrativo da viabilidade"
+                    >
+                      <div className="flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5">
+                          {viab.verdict === 'VIAVEL' && (
+                            <span className="flex items-center gap-1 text-[11px] font-black text-emerald-300">
+                              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                              🟢 Viável
+                            </span>
+                          )}
+                          {viab.verdict === 'NAO_VIAVEL' && (
+                            <span className="flex items-center gap-1 text-[11px] font-black text-rose-300">
+                              <span className="w-2 h-2 rounded-full bg-rose-400" />
+                              🔴 Não Viável
+                            </span>
+                          )}
+                          {viab.verdict === 'AGUARDANDO_DEPENDENCIA' && (
+                            <span className="flex items-center gap-1 text-[11px] font-black text-purple-300">
+                              <Lock size={12} />
+                              ⚪ Aguardando Dependência
+                            </span>
+                          )}
+                          {viab.verdict === 'DADOS_INSUFICIENTES' && (
+                            <span className="flex items-center gap-1 text-[11px] font-black text-white/60">
+                              ⚪ Preço Não Informado
+                            </span>
+                          )}
+                        </div>
+
+                        <span className="text-[10px] text-amber-300 font-bold group-hover/viabcard:underline flex items-center gap-0.5">
+                          Demonstrativo <ArrowRight size={10} />
+                        </span>
+                      </div>
+
+                      {/* Required phrase */}
+                      <p className="text-[11px] font-medium text-white/90 leading-tight">
+                        “{viab.fraseExplicativa}”
+                      </p>
+
+                      {viab.verdict !== 'AGUARDANDO_DEPENDENCIA' && viab.verdict !== 'DADOS_INSUFICIENTES' && (
+                        <div className="flex items-center justify-between text-[10px] text-white/70 pt-2 border-t border-white/5">
+                          <span>Saldo Real Atual: <strong className="text-emerald-400">{formatCurrency(viab.saldoRealAtual)}</strong></span>
+                          <span>Saldo pós-compra: <strong className={viab.saldoAposCompra >= 0 ? 'text-emerald-300' : 'text-rose-400'}>
+                            {formatCurrency(viab.saldoAposCompra)}
+                          </strong></span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Description */}
                   {item.description && (
                     <p className="text-xs text-white/60 line-clamp-2 bg-white/5 p-2.5 rounded-xl border border-white/5">
@@ -646,104 +828,103 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
                       </div>
                     )}
 
-                    {item.due_date && (
+                    {item.suggested_store && (
                       <div className="flex items-center gap-1.5">
-                        <Clock size={13} className="text-amber-400 shrink-0" />
-                        <span>Prazo: <strong className="text-white">{new Date(item.due_date + 'T12:00:00').toLocaleDateString('pt-BR')}</strong></span>
+                        <ShoppingBag size={13} className="text-amber-400 shrink-0" />
+                        <span className="truncate">Loja: <strong className="text-white">{item.suggested_store}</strong></span>
                       </div>
                     )}
 
-                    {item.responsible_name && (
-                      <div className="flex items-center gap-1.5">
-                        <User size={13} className="text-blue-400 shrink-0" />
-                        <span className="truncate">Responsável: <strong className="text-white">{item.responsible_name}</strong></span>
-                      </div>
+                    {item.store_url && (
+                      <a
+                        href={item.store_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1 pt-0.5 truncate"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <ExternalLink size={12} className="shrink-0" />
+                        <span className="truncate">Ver anúncio / link do produto</span>
+                      </a>
                     )}
+                  </div>
+                </div>
 
-                    {item.task_titulo && (
-                      <div className="flex items-center gap-1.5">
-                        <Link2 size={13} className="text-amber-400 shrink-0" />
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            item.task_id && onOpenTaskDetail?.(item.task_id);
-                          }}
-                          className="hover:underline text-amber-300 font-semibold truncate"
-                        >
-                          Tarefa: {item.task_titulo}
-                        </button>
-                      </div>
-                    )}
+                {/* Card Bottom: Financial Values & Actions */}
+                <div className="pt-3 border-t border-white/10 space-y-3">
+                  <div className="flex items-baseline justify-between">
+                    <div>
+                      <span className="text-[10px] text-white/40 font-semibold block uppercase">
+                        {item.status === 'COMPRADO' ? 'Valor Pago' : item.paid_price && item.paid_price > 0 ? 'Preço Real' : 'Preço Estimado'}
+                      </span>
+                      <p className="text-lg font-black text-white">
+                        {formatCurrency(item.paid_price && item.paid_price > 0 ? item.paid_price : (item.estimated_price * (item.quantity || 1)))}
+                      </p>
+                    </div>
 
-                    {item.supplier && (
-                      <div className="flex items-center gap-1.5 text-white/40">
-                        <Building2 size={13} className="shrink-0" />
-                        <span className="truncate">Loja: {item.supplier}</span>
+                    {item.status !== 'COMPRADO' && (
+                      <div className="text-right">
+                        <span className="text-[10px] text-white/40 block">Unitário Est.</span>
+                        <span className="text-xs font-semibold text-white/70">
+                          {formatCurrency(item.estimated_price)}
+                        </span>
                       </div>
                     )}
                   </div>
 
-                  {/* 3. PRODUCT LINK CLICKABLE BUTTON */}
-                  {item.product_url && (
-                    <div className="pt-2">
-                      <a
-                        href={item.product_url.startsWith('http') ? item.product_url : `https://${item.product_url}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="w-full py-2 px-3 rounded-xl bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 hover:text-blue-100 border border-blue-500/30 hover:border-blue-500/60 text-xs font-bold flex items-center justify-between transition-all group/prodlink shadow-sm active:scale-[0.99] cursor-pointer"
-                        title={`Abrir link externo do produto: ${item.product_url}`}
+                  {/* Actions Toolbar */}
+                  <div className="flex items-center justify-between gap-2">
+                    {item.status !== 'COMPRADO' ? (
+                      <button
+                        onClick={() => handleInitiateMarkBought(item)}
+                        className="px-3.5 py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold text-xs flex items-center gap-1.5 transition-colors border border-emerald-500/30 cursor-pointer"
+                        title="Registrar item como comprado"
                       >
-                        <div className="flex items-center gap-2 truncate">
-                          <Globe size={14} className="text-blue-400 shrink-0" />
-                          <span className="truncate">Ver Produto / Loja Online</span>
-                        </div>
-                        <ExternalLink size={13} className="text-blue-400 group-hover/prodlink:translate-x-0.5 group-hover/prodlink:-translate-y-0.5 transition-transform shrink-0" />
-                      </a>
+                        <Check size={14} />
+                        Comprei
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-emerald-400 font-bold flex items-center gap-1">
+                        <CheckCircle2 size={14} />
+                        Compra Concluída
+                      </span>
+                    )}
+
+                    <div className="flex items-center gap-1">
+                      {item.status !== 'COMPRADO' && (
+                        <button
+                          onClick={(e) => handleOpenAnalysis(item, e)}
+                          className="p-2 rounded-xl bg-amber-400/10 hover:bg-amber-400 text-amber-300 hover:text-zinc-950 font-bold text-xs flex items-center transition-colors cursor-pointer"
+                          title="Ver Demonstrativo de Viabilidade desta compra"
+                        >
+                          <Sparkles size={14} />
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenPhotoGallery(item, e);
+                        }}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition-colors cursor-pointer"
+                        title="Fotos & Orçamentos"
+                      >
+                        <Camera size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleOpenEdit(item)}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition-colors cursor-pointer"
+                        title="Editar Compra"
+                      >
+                        <Edit2 size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(item.id, item.product_name)}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-rose-500/20 text-white/50 hover:text-rose-400 transition-colors cursor-pointer"
+                        title="Excluir Compra"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
-                  )}
-                </div>
-
-                {/* Bottom Actions */}
-                <div className="pt-3 border-t border-white/10 flex items-center justify-between gap-2">
-                  {item.status !== 'COMPRADO' ? (
-                    <button
-                      onClick={(e) => handleInitiateMarkBought(item, e)}
-                      disabled={isBlocked}
-                      className={`flex-1 py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                        isBlocked
-                          ? 'bg-white/5 text-white/30 border border-white/5 cursor-not-allowed'
-                          : 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 shadow-md shadow-emerald-500/20 active:scale-95'
-                      }`}
-                    >
-                      <Check size={15} />
-                      {isBlocked ? 'Bloqueado' : 'Comprar / Baixar'}
-                    </button>
-                  ) : (
-                    <span className="text-xs text-emerald-400 font-bold flex items-center gap-1">
-                      <CheckCircle2 size={15} /> Concluído
-                    </span>
-                  )}
-
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenEdit(item);
-                      }}
-                      className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-amber-400 hover:text-zinc-950 text-white font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer"
-                      title="Editar todos os dados"
-                    >
-                      <Edit size={13} />
-                      <span>Editar</span>
-                    </button>
-                    <button
-                      onClick={(e) => handleDelete(item.id, e)}
-                      className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white transition-colors cursor-pointer"
-                      title="Excluir"
-                    >
-                      <Trash2 size={14} />
-                    </button>
                   </div>
                 </div>
               </div>
@@ -756,106 +937,89 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
       <PurchaseFormModal
         isOpen={isFormModalOpen}
         onClose={() => setIsFormModalOpen(false)}
-        purchaseToEdit={purchaseToEdit}
         onSuccess={loadData}
+        onSaved={loadData}
+        purchaseToEdit={purchaseToEdit}
       />
 
-      {/* Photo Lightbox */}
+      {/* Photo Lightbox / Multi-image Gallery */}
       <PurchaseImageLightbox
         isOpen={lightboxOpen}
         onClose={() => setLightboxOpen(false)}
-        purchaseId={lightboxPurchaseId}
         images={lightboxImages}
         initialIndex={lightboxIndex}
-        productName={lightboxTitle}
-        onImagesChange={(updatedImages) => {
-          if (lightboxPurchaseId) {
-            const primary = updatedImages.find(i => i.is_primary)?.public_url || updatedImages[0]?.public_url || undefined;
-            setPurchases(prev => prev.map(p => {
-              if (p.id === lightboxPurchaseId) {
-                return {
-                  ...p,
-                  primary_image_url: primary,
-                  images: updatedImages,
-                  images_count: updatedImages.length
-                };
-              }
-              return p;
-            }));
-          }
+        title={lightboxTitle}
+        purchaseId={lightboxPurchaseId}
+        onImagesUpdated={() => {
           loadData();
         }}
       />
 
-      {/* Mark as Bought Confirmation Modal */}
+      {/* Confirm Mark as Bought Modal with Financial Sync */}
       {itemToMarkBought && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
-          <div className="relative w-full max-w-md bg-zinc-900 border border-white/10 rounded-3xl p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <CheckCircle2 size={20} className="text-emerald-400" />
-                Registrar Compra Efetuada
-              </h3>
-              <button
-                onClick={() => setItemToMarkBought(null)}
-                className="text-white/40 hover:text-white"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <p className="text-xs text-white/70">
-                Você está confirmando a compra de: <strong className="text-white">{itemToMarkBought.product_name}</strong>.
-              </p>
-
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md bg-zinc-900 border border-white/15 rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 border-b border-white/10 pb-3">
+              <div className="p-2.5 rounded-2xl bg-emerald-500/20 text-emerald-400">
+                <CheckCircle2 size={22} />
+              </div>
               <div>
-                <label className="block text-xs font-semibold text-white/70 mb-1">
-                  Valor Real Pago (R$)
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-2.5 text-xs text-white/40 font-bold">R$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    value={paidPriceInput}
-                    onChange={e => setPaidPriceInput(Number(e.target.value))}
-                    className="w-full bg-zinc-950 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-emerald-400 font-bold text-sm focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="p-3 rounded-2xl bg-white/5 border border-white/10 flex items-start gap-3">
-                <input
-                  type="checkbox"
-                  id="syncFin"
-                  checked={syncFinancialInput}
-                  onChange={e => setSyncFinancialInput(e.target.checked)}
-                  className="mt-0.5 rounded border-white/20 bg-zinc-900 text-emerald-500 focus:ring-0"
-                />
-                <label htmlFor="syncFin" className="text-xs text-white/80 cursor-pointer">
-                  <strong>Registrar no Financeiro da Chácara</strong>
-                  <p className="text-[11px] text-white/40">
-                    Gera um lançamento oficial de saída no módulo financeiro vinculado a esta chácara.
-                  </p>
-                </label>
+                <h3 className="text-base font-black text-white">Confirmar Compra Realizada</h3>
+                <p className="text-xs text-white/50 truncate max-w-xs">{itemToMarkBought.product_name}</p>
               </div>
             </div>
 
-            <div className="pt-3 border-t border-white/10 flex items-center justify-end gap-2">
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-white/70 font-semibold mb-1">
+                  Valor Total Efetivamente Pago (R$):
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={paidPriceInput || ''}
+                  onChange={(e) => setPaidPriceInput(parseFloat(e.target.value) || 0)}
+                  className="w-full px-3.5 py-2.5 bg-zinc-950 border border-white/15 rounded-xl text-white font-bold text-sm focus:outline-none focus:border-amber-400"
+                  placeholder="0.00"
+                />
+                <span className="text-[10px] text-white/40 mt-1 block">
+                  Valor estimado original: {formatCurrency(itemToMarkBought.estimated_price * (itemToMarkBought.quantity || 1))}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10 space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={syncFinancialInput}
+                    onChange={(e) => setSyncFinancialInput(e.target.checked)}
+                    className="w-4 h-4 rounded text-amber-400 focus:ring-0 cursor-pointer"
+                  />
+                  <span className="font-bold text-white text-xs">
+                    Lançar automaticamente em Contas a Pagar
+                  </span>
+                </label>
+                <p className="text-[11px] text-white/50 pl-6">
+                  Cria uma despesa liquidada (PAGO) na chácara correspondente vinculada a esta compra da casa.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
               <button
                 type="button"
                 onClick={() => setItemToMarkBought(null)}
-                className="px-4 py-2 rounded-xl bg-white/5 text-white/70 text-xs font-semibold hover:bg-white/10"
+                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs transition-colors cursor-pointer"
+                disabled={savingBought}
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={handleConfirmMarkBought}
+                className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-xs transition-colors shadow-lg shadow-emerald-500/20 cursor-pointer"
                 disabled={savingBought}
-                className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-bold transition-all shadow-lg shadow-emerald-500/20"
               >
                 {savingBought ? 'Salvando...' : 'Confirmar Compra'}
               </button>
@@ -863,6 +1027,24 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
           </div>
         </div>
       )}
+
+      {/* Detail Viability Diagnosis Modal */}
+      <PurchaseViabilityDetailModal
+        isOpen={isAnalysisModalOpen}
+        onClose={() => {
+          setIsAnalysisModalOpen(false);
+          setPurchaseForAnalysis(null);
+        }}
+        purchase={purchaseForAnalysis}
+        analysis={purchaseForAnalysis && viabilitySummary ? viabilitySummary.analysesByPurchaseId[purchaseForAnalysis.id] || null : null}
+        onMarkAsBought={(purchaseId) => {
+          setIsAnalysisModalOpen(false);
+          const item = purchases.find(p => p.id === purchaseId);
+          if (item) {
+            handleInitiateMarkBought(item);
+          }
+        }}
+      />
     </div>
   );
 }

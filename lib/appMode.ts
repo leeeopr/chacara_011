@@ -6,21 +6,13 @@ export function getAppMode(): AppMode {
   if (typeof window !== 'undefined') {
     const saved = localStorage.getItem('app_mode');
     if (saved === 'DEMO') return 'DEMO';
-    if (saved === 'PRODUCTION') {
-      if (!isSupabaseConfigured()) {
-        return 'DEMO';
-      }
-      return 'PRODUCTION';
-    }
-  }
-  if (!isSupabaseConfigured()) {
-    return 'DEMO';
+    if (saved === 'PRODUCTION') return 'PRODUCTION';
   }
   return 'PRODUCTION';
 }
 
 export function isDemoMode(): boolean {
-  return getAppMode() === 'DEMO' || !isSupabaseConfigured();
+  return getAppMode() === 'DEMO';
 }
 
 export function setAppMode(mode: AppMode) {
