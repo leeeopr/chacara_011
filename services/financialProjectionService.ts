@@ -24,6 +24,7 @@ import { getMaintenanceRecords } from './roomsMaintenanceService';
 import { getCrewReservationPayments, getCrewMembers } from './crewService';
 import { getPlanningDecisions } from './planningService';
 import { getChacaras } from './chacarasService';
+import { getFinancialSettings } from './financialSettingsService';
 import { Reservation, Chacara } from '@/lib/chacaraTypes';
 import { formatCurrency } from '@/lib/utils';
 
@@ -72,7 +73,8 @@ export async function getFinancialProjection(filters?: {
     allMaintenances,
     allCrewPayments,
     allCrewMembers,
-    allDecisions
+    allDecisions,
+    finSettings
   ] = await Promise.all([
     getChacaras(),
     getGlobalFinancialData({ chacaraId: selectedChacaraId }),
@@ -82,7 +84,8 @@ export async function getFinancialProjection(filters?: {
     getMaintenanceRecords({ chacara_id: selectedChacaraId !== 'GENERAL' ? selectedChacaraId : undefined }),
     getCrewReservationPayments(),
     getCrewMembers({ activeOnly: true, chacaraId: selectedChacaraId !== 'GENERAL' ? selectedChacaraId : undefined }),
-    getPlanningDecisions({ chacara_id: selectedChacaraId })
+    getPlanningDecisions({ chacara_id: selectedChacaraId }),
+    getFinancialSettings(selectedChacaraId)
   ]);
 
   const chacaraMap = new Map<string, string>(chacarasList.map(c => [c.id, c.name]));
@@ -92,11 +95,15 @@ export async function getFinancialProjection(filters?: {
 
   // 2. AUDITORIA DO CAIXA ATUAL & SALDOS INICIAIS
   const caixaBrutoEmConta = Number(globalFinData.receitaRecebida || 0);
-  const reservaEmergenciaAtual = 0;
+  const percentualReserva = (finSettings.emergency_reserve_percent || 0) / 100;
+  const percentualManutencao = (finSettings.maintenance_percent || 0) / 100;
+
+  const reservaEmergenciaAtual = Math.round(caixaBrutoEmConta * percentualReserva * 100) / 100;
+  const minimoCirculavelAtual = Math.round(caixaBrutoEmConta * percentualManutencao * 100) / 100;
   const caucoesAtuais = Number(globalFinData.caucoesEmAberto || 0);
 
-  // Caixa Operacional Realmente Disponível Hoje
-  const caixaOperacionalLivreHoje = Math.max(0, caixaBrutoEmConta - caucoesAtuais);
+  // Caixa Operacional Realmente Disponível Hoje (Deduzindo Reserva, Mínimo Circulável e Cauções)
+  const caixaOperacionalLivreHoje = Math.max(0, Math.round((caixaBrutoEmConta - reservaEmergenciaAtual - minimoCirculavelAtual - caucoesAtuais) * 100) / 100);
 
   const allItems: FinancialProjectionItem[] = [];
 
@@ -587,9 +594,9 @@ export async function getFinancialProjection(filters?: {
     chacaraFilter: selectedChacaraId,
     chacaraFilterName,
     caixaBrutoEmConta,
-    reservaEmergenciaAtual: 0,
-    reservaEmergenciaProjetada: 0,
-    reservaTotalPotencial: 0,
+    reservaEmergenciaAtual,
+    reservaEmergenciaProjetada: reservaEmergenciaAtual,
+    reservaTotalPotencial: reservaEmergenciaAtual,
     caucoesAtuais,
     caixaOperacionalLivreHoje,
     hoje,
@@ -603,7 +610,7 @@ export async function getFinancialProjection(filters?: {
       totalEntradasLiquidas,
       totalSaidas,
       saldoFinal90d: proxima61a90d.saldoFinalProjetado,
-      reservaFinal90d: 0,
+      reservaFinal90d: reservaEmergenciaAtual,
       itensSemValorDefinido
     },
     allItems

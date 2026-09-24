@@ -985,6 +985,22 @@ CREATE TABLE IF NOT EXISTS public.google_calendar_integrations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.chacara_financial_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  chacara_id UUID REFERENCES public.chacaras(id) ON DELETE CASCADE,
+  emergency_reserve_percent NUMERIC(5,2) NOT NULL DEFAULT 20.00 CHECK (emergency_reserve_percent >= 0 AND emergency_reserve_percent <= 100),
+  maintenance_percent NUMERIC(5,2) NOT NULL DEFAULT 15.00 CHECK (maintenance_percent >= 0 AND maintenance_percent <= 100),
+  notes TEXT,
+  updated_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Inserir configuração global padrão caso não exista
+INSERT INTO public.chacara_financial_settings (chacara_id, emergency_reserve_percent, maintenance_percent, notes)
+SELECT NULL, 20.00, 15.00, 'Configuração global padrão da chácara'
+WHERE NOT EXISTS (SELECT 1 FROM public.chacara_financial_settings WHERE chacara_id IS NULL);
+
 -- TRIGGERS DE UPDATED_AT
 DO $$
 BEGIN

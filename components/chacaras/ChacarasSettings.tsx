@@ -6,16 +6,32 @@ import PricingManagement from './PricingManagement';
 import CrewRolesSettings from './CrewRolesSettings';
 import GoogleCalendarSettingsPanel from './GoogleCalendarSettingsPanel';
 import SupabaseDatabasePanel from './SupabaseDatabasePanel';
+import FinancialSettingsPanel from './FinancialSettingsPanel';
 import { useAppMode } from '@/contexts/AppModeContext';
 
 export default function ChacarasSettings() {
-  const [activeSubTab, setActiveSubTab] = useState<'supabase_sql' | 'google_calendar' | 'precificacao' | 'funcoes_equipe' | 'demonstracao' | 'notificacoes' | 'contratos' | 'integracoes'>('supabase_sql');
+  const [activeSubTab, setActiveSubTab] = useState<'financial_settings' | 'supabase_sql' | 'google_calendar' | 'precificacao' | 'funcoes_equipe' | 'demonstracao' | 'notificacoes' | 'contratos' | 'integracoes'>('financial_settings');
   const { mode, isDemo, resetDemoData, setMode } = useAppMode();
 
   return (
     <div className="space-y-6 pb-8">
       {/* Settings Sub-Tabs Navigation */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-white/10">
+        <button
+          onClick={() => setActiveSubTab('financial_settings')}
+          className={`px-5 py-3 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 border shrink-0 ${
+            activeSubTab === 'financial_settings'
+              ? 'bg-[#FFD600] text-[#0A0F2C] border-[#FFD600] shadow-[0_0_15px_rgba(255,214,0,0.25)]'
+              : 'bg-white/5 text-white/60 border-white/10 hover:bg-white/10 hover:text-white'
+          }`}
+        >
+          <Settings size={16} />
+          <span>Percentuais Financeiros</span>
+          <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-black">
+            Central
+          </span>
+        </button>
+
         <button
           onClick={() => setActiveSubTab('supabase_sql')}
           className={`px-5 py-3 rounded-2xl text-xs font-bold transition-all flex items-center gap-2 border shrink-0 ${
@@ -129,6 +145,7 @@ export default function ChacarasSettings() {
       </div>
 
       {/* Render Active Sub Tab */}
+      {activeSubTab === 'financial_settings' && <FinancialSettingsPanel />}
       {activeSubTab === 'supabase_sql' && <SupabaseDatabasePanel />}
       {activeSubTab === 'google_calendar' && <GoogleCalendarSettingsPanel />}
       {activeSubTab === 'precificacao' && <PricingManagement />}

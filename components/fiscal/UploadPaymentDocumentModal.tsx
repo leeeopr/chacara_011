@@ -16,15 +16,27 @@ import {
   Loader2,
   Building2,
   Receipt,
-  FileCheck
+  FileCheck,
+  Copy,
+  Check,
+  Edit2,
+  ShieldCheck,
+  IdCard,
+  BookmarkCheck,
+  Square,
+  CheckSquare
 } from 'lucide-react';
 import { FiscalReservationItem, PaymentDocument } from '@/lib/fiscalTypes';
 import {
   uploadPaymentDocument,
   getPaymentDocumentsForReservation,
   deletePaymentDocument,
+  updatePaymentDocumentCpf,
+  togglePaymentDocumentDeduction,
+  getDeductedDocsMap,
   deriveCompetencia
 } from '@/services/fiscalService';
+import { formatCPF, cleanCPF, validateCPF } from '@/lib/cpfUtils';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface UploadPaymentDocumentModalProps {
@@ -52,10 +64,18 @@ export default function UploadPaymentDocumentModal({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [paymentDate, setPaymentDate] = useState<string>('');
   const [amount, setAmount] = useState<string>('');
+  const [cpf, setCpf] = useState<string>('');
   const [description, setDescription] = useState<string>('');
   const [competencia, setCompetencia] = useState<string>('');
   const [observacoes, setObservacoes] = useState<string>('');
   const [dragOver, setDragOver] = useState(false);
+
+  // Inline CPF editing for existing documents
+  const [editingDocId, setEditingDocId] = useState<string | null>(null);
+  const [editingCpfValue, setEditingCpfValue] = useState<string>('');
+  const [savingCpfId, setSavingCpfId] = useState<string | null>(null);
+  const [copiedDocId, setCopiedDocId] = useState<string | null>(null);
+  const [togglingDeductionDocId, setTogglingDeductionDocId] = useState<string | null>(null);
 
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
@@ -95,6 +115,9 @@ export default function UploadPaymentDocumentModal({
         setAmount(reservation.total_price ? String(reservation.total_price) : '');
         setDescription(`Comprovante de pagamento - ${reservation.code}`);
         setObservacoes('');
+        setCpf('');
+        setEditingDocId(null);
+        setEditingCpfValue('');
         setSelectedFile(null);
         setFeedbackMsg(null);
       }
@@ -108,7 +131,13 @@ export default function UploadPaymentDocumentModal({
     setLoadingDocs(true);
     try {
       const docs = await getPaymentDocumentsForReservation(reservation.reservation_id);
-      setDocuments(docs);
+      const deductedMap = getDeductedDocsMap();
+      const docsWithDeduction = (docs || []).map(d => ({
+        ...d,
+        is_deducted: deductedMap[d.id] !== undefined ? deductedMap[d.id].is_deducted : Boolean(d.is_deducted),
+        deducted_at: deductedMap[d.id]?.deducted_at || d.deducted_at
+      }));
+      setDocuments(docsWithDeduction);
     } catch (err) {
       console.error('Erro ao carregar comprovantes da reserva:', err);
     } finally {
@@ -116,9 +145,36 @@ export default function UploadPaymentDocumentModal({
     }
   };
 
+  const handleToggleDeduction = async (doc: PaymentDocument) => {
+    const nextVal = !doc.is_deducted;
+    setTogglingDeductionDocId(doc.id);
+    try {
+      await togglePaymentDocumentDeduction(doc.id, nextVal);
+      setDocuments(prev => prev.map(d => {
+        if (d.id === doc.id) {
+          return {
+            ...d,
+            is_deducted: nextVal,
+            deducted_at: nextVal ? new Date().toISOString() : undefined
+          };
+        }
+        return d;
+      }));
+    } catch (err) {
+      console.error('Erro ao alternar dedução do comprovante:', err);
+    } finally {
+      setTogglingDeductionDocId(null);
+    }
+  };
+
   const handleDateChange = (val: string) => {
     setPaymentDate(val);
     setCompetencia(deriveCompetencia(val));
+  };
+
+  const handleCpfInputChange = (val: string) => {
+    // Formats while typing (e.g. 123.456.789-00)
+    setCpf(formatCPF(val));
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -162,6 +218,18 @@ export default function UploadPaymentDocumentModal({
       return;
     }
 
+    // CPF validation if provided
+    const cleanCpfDigits = cleanCPF(cpf);
+    if (cpf.trim()) {
+      if (cleanCpfDigits.length !== 11 || !validateCPF(cpf)) {
+        setFeedbackMsg({
+          type: 'error',
+          text: 'O CPF informado é inválido. Digite um CPF válido de 11 dígitos para o pagador.'
+        });
+        return;
+      }
+    }
+
     setUploading(true);
     setFeedbackMsg({ type: 'info', text: 'Enviando comprovante para o servidor...' });
 
@@ -172,6 +240,7 @@ export default function UploadPaymentDocumentModal({
         file: selectedFile,
         payment_date: paymentDate,
         amount: Number(amount),
+        cpf: cpf.trim() ? formatCPF(cleanCpfDigits) : undefined,
         description: description || 'Comprovante de Recebimento',
         competencia: competencia || deriveCompetencia(paymentDate),
         observacoes,
@@ -179,9 +248,10 @@ export default function UploadPaymentDocumentModal({
       });
 
       setSelectedFile(null);
+      setCpf('');
       setDescription(`Comprovante adicional - ${reservation.code}`);
       setObservacoes('');
-      setFeedbackMsg({ type: 'success', text: 'Comprovante adicionado com sucesso!' });
+      setFeedbackMsg({ type: 'success', text: 'Comprovante e CPF adicionados com sucesso!' });
       await loadDocs();
       onSuccess();
     } catch (err: any) {
@@ -192,6 +262,73 @@ export default function UploadPaymentDocumentModal({
       });
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleCopyCpf = async (docId: string, cpfToCopy: string) => {
+    const digits = cleanCPF(cpfToCopy);
+    if (!digits) return;
+    const formatted = formatCPF(digits);
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(formatted);
+      } else {
+        const el = document.createElement('textarea');
+        el.value = formatted;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+      }
+      setCopiedDocId(docId);
+      setTimeout(() => setCopiedDocId(null), 2500);
+    } catch (err) {
+      console.error('Erro ao copiar CPF:', err);
+    }
+  };
+
+  const handleStartEditCpf = (doc: PaymentDocument) => {
+    setEditingDocId(doc.id);
+    setEditingCpfValue(doc.cpf || doc.payer_document || '');
+  };
+
+  const handleCancelEditCpf = () => {
+    setEditingDocId(null);
+    setEditingCpfValue('');
+  };
+
+  const handleSaveCpf = async (docId: string) => {
+    const digits = cleanCPF(editingCpfValue);
+    if (editingCpfValue.trim()) {
+      if (digits.length !== 11) {
+        setFeedbackMsg({
+          type: 'error',
+          text: 'O CPF deve conter exatamente 11 dígitos numéricos.'
+        });
+        return;
+      }
+      if (!validateCPF(editingCpfValue)) {
+        setFeedbackMsg({
+          type: 'error',
+          text: 'O CPF informado não é válido. Verifique os dígitos digitados.'
+        });
+        return;
+      }
+    }
+
+    setSavingCpfId(docId);
+    setFeedbackMsg(null);
+    try {
+      await updatePaymentDocumentCpf(docId, digits.length === 11 ? formatCPF(digits) : '');
+      setEditingDocId(null);
+      setEditingCpfValue('');
+      setFeedbackMsg({ type: 'success', text: 'CPF do comprovante atualizado com sucesso!' });
+      await loadDocs();
+      onSuccess();
+    } catch (err: any) {
+      setFeedbackMsg({ type: 'error', text: `Erro ao salvar CPF: ${err.message}` });
+    } finally {
+      setSavingCpfId(null);
     }
   };
 
@@ -389,14 +526,41 @@ export default function UploadPaymentDocumentModal({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* CPF & Details Row */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[10px] font-bold text-white/70 uppercase flex items-center gap-1">
+                    <IdCard size={12} className="text-[#FFD600]" /> CPF do Pagador / Responsável
+                  </label>
+                  {cpf.trim() && cleanCPF(cpf).length === 11 && (
+                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                      validateCPF(cpf) ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
+                    }`}>
+                      {validateCPF(cpf) ? '✓ Válido' : '✗ Inválido'}
+                    </span>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  placeholder="000.000.000-00 (Opcional)"
+                  maxLength={14}
+                  value={cpf}
+                  onChange={(e) => handleCpfInputChange(e.target.value)}
+                  className="w-full px-3 py-2 bg-black/40 border border-white/15 rounded-xl text-xs text-white outline-none focus:border-[#FFD600] font-mono"
+                />
+                <p className="text-[9px] text-white/40 mt-1">
+                  Vinculado a este comprovante para o Carnê-Leão.
+                </p>
+              </div>
+
               <div>
                 <label className="text-[10px] font-bold text-white/70 uppercase block mb-1">
-                  Descrição / Categoria do Pagamento
+                  Descrição / Categoria
                 </label>
                 <input
                   type="text"
-                  placeholder="Ex: Sinal 50%, Quitação, Pix Caixa..."
+                  placeholder="Ex: Sinal 50%, Quitação, Pix..."
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   className="w-full px-3 py-2 bg-black/40 border border-white/15 rounded-xl text-xs text-white outline-none focus:border-[#FFD600]"
@@ -405,11 +569,11 @@ export default function UploadPaymentDocumentModal({
 
               <div>
                 <label className="text-[10px] font-bold text-white/70 uppercase block mb-1">
-                  Observações para o Carnê-Leão
+                  Observações Carnê-Leão
                 </label>
                 <input
                   type="text"
-                  placeholder="Ex: Recebido por transferência Pix..."
+                  placeholder="Ex: Recebido por transferência..."
                   value={observacoes}
                   onChange={(e) => setObservacoes(e.target.value)}
                   className="w-full px-3 py-2 bg-black/40 border border-white/15 rounded-xl text-xs text-white outline-none focus:border-[#FFD600]"
@@ -458,70 +622,217 @@ export default function UploadPaymentDocumentModal({
                 </p>
               </div>
             ) : (
-              <div className="space-y-2">
-                {documents.map((doc) => (
-                  <div
-                    key={doc.id}
-                    className="p-3.5 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="p-2.5 bg-emerald-500/10 text-emerald-400 rounded-xl shrink-0 mt-0.5">
-                        <FileCheck size={18} />
-                      </div>
-                      <div>
-                        <p className="font-bold text-white flex items-center gap-2">
-                          <span>{doc.file_name}</span>
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-white/10 text-white/70 font-semibold">
-                            {doc.competencia}
+              <div className="space-y-3">
+                {documents.map((doc) => {
+                  const docCpf = doc.cpf || doc.payer_document || '';
+                  const cleanDigits = cleanCPF(docCpf);
+                  const hasValidCpf = cleanDigits.length === 11;
+                  const isEditingThis = editingDocId === doc.id;
+                  const isCopied = copiedDocId === doc.id;
+
+                  return (
+                    <div
+                      key={doc.id}
+                      className="p-4 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all flex flex-col gap-3 text-xs"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          <div className="p-2.5 bg-emerald-500/10 text-emerald-400 rounded-xl shrink-0 mt-0.5">
+                            <FileCheck size={18} />
+                          </div>
+                          <div>
+                            <p className="font-bold text-white flex items-center gap-2 flex-wrap">
+                              <span className="break-all">{doc.file_name}</span>
+                              <span className="text-[10px] px-2 py-0.5 rounded bg-white/10 text-white/70 font-semibold">
+                                {doc.competencia}
+                              </span>
+                            </p>
+                            <p className="text-[11px] text-white/60 mt-0.5">
+                              {doc.description || 'Comprovante'} • Pagamento: {doc.payment_date}
+                            </p>
+                            {doc.observacoes && (
+                              <p className="text-[10px] text-white/40 italic mt-0.5">
+                                Obs: {doc.observacoes}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
+                          <span className="font-black text-[#FFD600] text-sm">
+                            R$ {Number(doc.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                           </span>
-                        </p>
-                        <p className="text-[11px] text-white/60 mt-0.5">
-                          {doc.description || 'Comprovante'} • Pagamento: {doc.payment_date}
-                        </p>
-                        {doc.observacoes && (
-                          <p className="text-[10px] text-white/40 italic mt-0.5">
-                            Obs: {doc.observacoes}
-                          </p>
-                        )}
+
+                          <div className="flex items-center gap-1.5">
+                            {doc.public_url && (
+                              <a
+                                href={doc.public_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl flex items-center gap-1 text-[11px] font-bold transition-all"
+                                title="Visualizar / Baixar arquivo"
+                              >
+                                <ExternalLink size={13} />
+                                <span>Ver</span>
+                              </a>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(doc)}
+                              disabled={deletingId === doc.id}
+                              className="p-1.5 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/20 rounded-xl transition-all cursor-pointer"
+                              title="Excluir comprovante"
+                            >
+                              {deletingId === doc.id ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <Trash2 size={14} />
+                              )}
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-white/10">
-                      <span className="font-black text-[#FFD600] text-sm">
-                        R$ {Number(doc.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                      </span>
+                      {/* CPF Associated Strip & Quick Actions */}
+                      <div className="pt-2 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-black/20 -mx-4 -mb-4 p-3 rounded-b-2xl">
+                        {isEditingThis ? (
+                          <div className="flex-1 flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] font-bold text-white/60 uppercase">
+                              CPF do Pagador:
+                            </span>
+                            <input
+                              type="text"
+                              placeholder="000.000.000-00"
+                              maxLength={14}
+                              value={editingCpfValue}
+                              onChange={(e) => setEditingCpfValue(formatCPF(e.target.value))}
+                              className="px-2.5 py-1 bg-black/60 border border-white/20 rounded-lg text-xs text-white font-mono outline-none focus:border-[#FFD600] w-36"
+                              autoFocus
+                            />
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleSaveCpf(doc.id)}
+                                disabled={savingCpfId === doc.id}
+                                className="px-3 py-1 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[11px] rounded-lg transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                              >
+                                {savingCpfId === doc.id ? (
+                                  <Loader2 size={12} className="animate-spin" />
+                                ) : (
+                                  <Check size={12} />
+                                )}
+                                <span>Salvar</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleCancelEditCpf}
+                                className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] font-bold text-white/50 uppercase flex items-center gap-1">
+                              <IdCard size={12} /> CPF Carnê-Leão:
+                            </span>
 
-                      <div className="flex items-center gap-2">
-                        {doc.public_url && (
-                          <a
-                            href={doc.public_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-xl flex items-center gap-1 text-[11px] font-bold transition-all"
-                            title="Visualizar / Baixar arquivo"
+                            {hasValidCpf ? (
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 text-xs">
+                                  {formatCPF(cleanDigits)}
+                                </span>
+                                <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider bg-emerald-500/20 px-1.5 py-0.5 rounded">
+                                  INFORMADO
+                                </span>
+
+                                {/* 1-Click Copy Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyCpf(doc.id, docCpf)}
+                                  className={`px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                                    isCopied
+                                      ? 'bg-emerald-500 text-black shadow-md'
+                                      : 'bg-white/10 hover:bg-[#FFD600] hover:text-[#0A0F2C] text-white'
+                                  }`}
+                                  title="Copiar CPF formatado para colar no Carnê-Leão"
+                                >
+                                  {isCopied ? <Check size={12} /> : <Copy size={12} />}
+                                  <span>{isCopied ? 'Copiado!' : 'Copiar'}</span>
+                                </button>
+
+                                {/* Edit Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditCpf(doc)}
+                                  className="px-2 py-1 bg-white/10 hover:bg-white/20 text-white/80 hover:text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer"
+                                  title="Editar CPF deste comprovante"
+                                >
+                                  <Edit2 size={11} />
+                                  <span>Editar</span>
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span className="text-[9px] font-black text-amber-400 bg-amber-500/20 border border-amber-500/30 px-2 py-0.5 rounded uppercase tracking-wider">
+                                  PENDENTE
+                                </span>
+                                <span className="text-[10px] text-white/40 italic">
+                                  Nenhum CPF associado
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditCpf(doc)}
+                                  className="px-2.5 py-1 bg-[#FFD600] hover:bg-[#FFE033] text-[#0A0F2C] font-black text-[10px] rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-sm"
+                                >
+                                  <Plus size={11} />
+                                  <span>Cadastrar CPF</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Dedução Carnê-Leão Toggle */}
+                        <div className="flex items-center gap-2 self-end sm:self-auto">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleDeduction(doc)}
+                            disabled={togglingDeductionDocId === doc.id}
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                              doc.is_deducted
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/40 group'
+                                : 'bg-white/5 hover:bg-[#FFD600] hover:text-[#0A0F2C] text-white/70 border-white/10 hover:border-[#FFD600]'
+                            }`}
+                            title={doc.is_deducted ? "Comprovante marcado como deduzido. Clique para desmarcar." : "Clique para marcar como deduzido no Carnê-Leão"}
                           >
-                            <ExternalLink size={14} />
-                            <span className="hidden sm:inline">Abrir</span>
-                          </a>
-                        )}
+                            {togglingDeductionDocId === doc.id ? (
+                              <Loader2 size={11} className="animate-spin text-white" />
+                            ) : doc.is_deducted ? (
+                              <>
+                                <CheckSquare size={12} className="text-emerald-400 group-hover:hidden" />
+                                <Square size={12} className="text-rose-400 hidden group-hover:inline" />
+                                <span className="group-hover:hidden">Deduzido Carnê-Leão ✓</span>
+                                <span className="hidden group-hover:inline">Desmarcar</span>
+                              </>
+                            ) : (
+                              <>
+                                <BookmarkCheck size={12} className="text-white/40" />
+                                <span>Marcar Carnê-Leão</span>
+                              </>
+                            )}
+                          </button>
 
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(doc)}
-                          disabled={deletingId === doc.id}
-                          className="p-2 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/20 rounded-xl transition-all cursor-pointer"
-                          title="Excluir comprovante"
-                        >
-                          {deletingId === doc.id ? (
-                            <Loader2 size={14} className="animate-spin" />
-                          ) : (
-                            <Trash2 size={14} />
-                          )}
-                        </button>
+                          <div className="text-[10px] text-white/40 hidden md:block">
+                            ID: {doc.id.substring(0, 8)}...
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

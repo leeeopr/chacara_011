@@ -13,6 +13,11 @@ export interface PaymentDocument {
   uploaded_at: string;
   uploaded_by?: string;
   public_url?: string;
+  cpf?: string; // CPF do pagador/responsável pelo pagamento (Carnê-Leão)
+  payer_document?: string; // Coluna persistida no banco Supabase
+  payer_name?: string;
+  is_deducted?: boolean; // Se foi marcado como deduzido no Carnê-Leão
+  deducted_at?: string;
 }
 
 export interface FiscalReservationItem {
@@ -65,4 +70,45 @@ export interface UploadDocumentDTO {
   competencia?: string; // YYYY-MM
   observacoes?: string;
   uploaded_by?: string;
+  cpf?: string; // CPF do pagador
+  payer_document?: string;
+}
+
+export interface UpdatePaymentDocumentDTO {
+  cpf?: string;
+  amount?: number;
+  payment_date?: string;
+  competencia?: string;
+  description?: string;
+  observacoes?: string;
+  is_deducted?: boolean;
+  deducted_at?: string;
+}
+
+/**
+ * Item para visualização direta na central de Carnê-Leão
+ * Vincula Reserva -> Comprovante -> CPF
+ */
+export interface CarneLeaoDocEntry {
+  id: string; // ID do comprovante
+  document: PaymentDocument;
+  reservation_id: string;
+  reservation_code: string;
+  chacara_id: string;
+  chacara_nome: string;
+  client_id?: string;
+  client_nome: string;
+  client_document?: string;
+  checkin_date: string;
+  checkout_date: string;
+  payment_date: string;
+  amount: number;
+  cpf: string;
+  cpf_status: 'INFORMADO' | 'PENDENTE';
+  file_name: string;
+  public_url?: string;
+  competencia?: string;
+  description?: string;
+  is_deducted: boolean;
+  deducted_at?: string;
 }

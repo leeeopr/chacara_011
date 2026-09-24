@@ -16,7 +16,8 @@ import {
   Sparkles,
   Trash2,
   AlertTriangle,
-  X
+  X,
+  IdCard
 } from 'lucide-react';
 import { Reservation, Chacara, Client, ReservationStatus, getEffectiveReservationPrice, isCustomReservationPrice } from '@/lib/chacaraTypes';
 import { getReservations, cancelReservation, duplicateReservation, deleteReservation } from '@/services/reservationsService';
@@ -24,6 +25,7 @@ import { getChacaras } from '@/services/chacarasService';
 import { getClients } from '@/services/clientsService';
 import NewReservationModal from './NewReservationModal';
 import ReservationDetailModal from './ReservationDetailModal';
+import ReservationsCarneLeaoTab from './ReservationsCarneLeaoTab';
 import ConfirmationModal from '../ui/ConfirmationModal';
 import Toast from '../ui/Toast';
 
@@ -36,6 +38,7 @@ export default function ReservationsManagement({
   initialChacaraId,
   initialClientId
 }: ReservationsManagementProps) {
+  const [activeSubTab, setActiveSubTab] = useState<'reservas' | 'carne_leao'>('reservas');
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [chacaras, setChacaras] = useState<Chacara[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -151,8 +154,60 @@ export default function ReservationsManagement({
 
   return (
     <div className="space-y-6 pb-8">
-      {/* Top Bar with Search & Multi-Filters */}
-      <div className="glass p-5 rounded-3xl border border-white/10 space-y-4">
+      {/* Sub-Tabs Bar: Todas as Reservas vs Carnê-Leão */}
+      <div className="flex items-center gap-2 p-1.5 bg-white/5 border border-white/10 rounded-2xl w-fit">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('reservas')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            activeSubTab === 'reservas'
+              ? 'bg-[#FFD600] text-[#0A0F2C] shadow-md'
+              : 'text-white/60 hover:text-white'
+          }`}
+        >
+          <CalendarCheck size={16} />
+          <span>Todas as Reservas</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('carne_leao')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            activeSubTab === 'carne_leao'
+              ? 'bg-[#FFD600] text-[#0A0F2C] shadow-md'
+              : 'text-white/60 hover:text-white'
+          }`}
+        >
+          <IdCard size={16} />
+          <span>Carnê-Leão</span>
+          <span className={`px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider ${
+            activeSubTab === 'carne_leao' ? 'bg-[#0A0F2C]/20 text-[#0A0F2C]' : 'bg-purple-500/20 text-purple-300'
+          }`}>
+            Fiscal
+          </span>
+        </button>
+      </div>
+
+      {/* Sub-Tab 2: Carnê-Leão */}
+      {activeSubTab === 'carne_leao' ? (
+        <ReservationsCarneLeaoTab
+          onOpenReservationDetail={async (resId) => {
+            let r = reservations.find(x => x.id === resId);
+            if (!r) {
+              try {
+                const list = await getReservations({});
+                r = list.find(x => x.id === resId);
+              } catch (e) {
+                console.warn('Erro ao buscar reserva:', e);
+              }
+            }
+            if (r) handleOpenDetail(r);
+          }}
+        />
+      ) : (
+        <>
+          {/* Top Bar with Search & Multi-Filters */}
+          <div className="glass p-5 rounded-3xl border border-white/10 space-y-4">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="relative flex-1 w-full">
             <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" />
@@ -370,6 +425,8 @@ export default function ReservationsManagement({
             );
           })}
         </div>
+      )}
+      </>
       )}
 
       {/* Modal de Confirmação de Cancelamento de Reserva */}

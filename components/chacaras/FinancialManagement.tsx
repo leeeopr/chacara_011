@@ -762,6 +762,145 @@ export default function FinancialManagement() {
           loadFinancialReport();
         }}
       />
+
+      {/* Financial Percentage Configuration Modal */}
+      {isConfigModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#0A0F2C] border border-[#FFD600]/30 w-full max-w-lg rounded-3xl p-6 shadow-2xl space-y-6 relative overflow-hidden">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-[#FFD600]/10 border border-[#FFD600]/30 text-[#FFD600]">
+                  <Sliders size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">Configuração dos Percentuais Financeiros</h3>
+                  <p className="text-xs text-white/50">
+                    {selectedChacara === 'TODAS' ? 'Definição Central / Padrão da Chácara' : `Chácara: ${chacaras.find(c => c.id === selectedChacara)?.name || 'Selecionada'}`}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsConfigModalOpen(false)}
+                className="p-2 text-white/40 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/10 space-y-2">
+                <label className="text-xs font-black uppercase text-emerald-400 tracking-wider flex items-center justify-between">
+                  <span>1. % Reserva de Emergência</span>
+                  <span className="text-emerald-300 font-bold">{editEmergPercent}%</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={editEmergPercent}
+                    onChange={(e) => setEditEmergPercent(Number(e.target.value))}
+                    className="flex-1 accent-emerald-500 cursor-pointer h-2 bg-white/10 rounded-lg"
+                  />
+                  <div className="relative w-24">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.5"
+                      value={editEmergPercent}
+                      onChange={(e) => setEditEmergPercent(Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)))}
+                      className="w-full bg-slate-900 border border-emerald-500/40 rounded-xl px-3 py-2 text-right text-emerald-400 font-black text-sm focus:outline-none focus:border-emerald-400"
+                    />
+                    <span className="absolute right-2 top-2 text-xs text-emerald-400/50 pointer-events-none font-bold">%</span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-white/40">
+                  Parcela blindada do total comprovado retida para imprevistos e salvaguarda patrimonial. (Permite 0% para desativar).
+                </p>
+              </div>
+
+              <div className="p-4 bg-white/5 rounded-2xl border border-white/10 space-y-2">
+                <label className="text-xs font-black uppercase text-blue-400 tracking-wider flex items-center justify-between">
+                  <span>2. % Mínimo Circulável de Manutenção</span>
+                  <span className="text-blue-300 font-bold">{editMaintPercent}%</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={editMaintPercent}
+                    onChange={(e) => setEditMaintPercent(Number(e.target.value))}
+                    className="flex-1 accent-blue-500 cursor-pointer h-2 bg-white/10 rounded-lg"
+                  />
+                  <div className="relative w-24">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.5"
+                      value={editMaintPercent}
+                      onChange={(e) => setEditMaintPercent(Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)))}
+                      className="w-full bg-slate-900 border border-blue-500/40 rounded-xl px-3 py-2 text-right text-blue-400 font-black text-sm focus:outline-none focus:border-blue-400"
+                    />
+                    <span className="absolute right-2 top-2 text-xs text-blue-400/50 pointer-events-none font-bold">%</span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-white/40">
+                  Fundo operacional contínuo isolado para manutenções preventivas e corretivas da chácara.
+                </p>
+              </div>
+
+              {/* Simulação instantânea */}
+              <div className="p-4 rounded-2xl bg-[#0d1642] border border-white/10 space-y-2">
+                <div className="text-[11px] font-bold text-white/60 uppercase tracking-wider">
+                  Simulação Instantânea (Base R$ 20.000)
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="p-2 bg-white/5 rounded-xl">
+                    <span className="text-emerald-400 text-[10px] block font-bold">Reserva ({editEmergPercent}%)</span>
+                    <span className="font-black text-white">R$ {(20000 * (editEmergPercent / 100)).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</span>
+                  </div>
+                  <div className="p-2 bg-white/5 rounded-xl">
+                    <span className="text-blue-400 text-[10px] block font-bold">Manut. ({editMaintPercent}%)</span>
+                    <span className="font-black text-white">R$ {(20000 * (editMaintPercent / 100)).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</span>
+                  </div>
+                  <div className="p-2 bg-white/5 rounded-xl">
+                    <span className="text-[#FFD600] text-[10px] block font-bold">Saldo Real Atual</span>
+                    <span className="font-black text-emerald-400">R$ {Math.max(0, 20000 - (20000 * (editEmergPercent / 100)) - (20000 * (editMaintPercent / 100))).toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsConfigModalOpen(false)}
+                className="px-4 py-2.5 rounded-xl text-white/60 hover:text-white font-bold text-xs hover:bg-white/5 transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isSavingSettings}
+                onClick={handleSaveSettings}
+                className="px-5 py-2.5 bg-[#FFD600] hover:bg-[#FFE500] text-[#0A0F2C] font-black text-xs rounded-xl shadow-lg transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+              >
+                {isSavingSettings ? (
+                  <Clock size={16} className="animate-spin" />
+                ) : (
+                  <Check size={16} />
+                )}
+                <span>Salvar Configurações</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
