@@ -30,7 +30,9 @@ interface PurchaseImageLightboxProps {
   images: (PurchaseImage | { id?: string; public_url: string; file_name?: string; is_primary?: boolean })[];
   initialIndex?: number;
   productName?: string;
+  title?: string;
   onImagesChange?: (updatedImages: PurchaseImage[]) => void;
+  onImagesUpdated?: (updatedImages: PurchaseImage[]) => void;
 }
 
 export default function PurchaseImageLightbox({
@@ -39,9 +41,12 @@ export default function PurchaseImageLightbox({
   purchaseId,
   images: initialImages = [],
   initialIndex = 0,
-  productName = 'Fotos do Produto',
-  onImagesChange
+  productName,
+  title,
+  onImagesChange,
+  onImagesUpdated
 }: PurchaseImageLightboxProps) {
+  const resolvedProductName = title || productName || 'Fotos do Produto';
   const [images, setImages] = useState(initialImages);
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [isUploading, setIsUploading] = useState(false);
@@ -102,6 +107,7 @@ export default function PurchaseImageLightbox({
       const updated = await getPurchaseImages(purchaseId);
       setImages(updated);
       onImagesChange?.(updated);
+      onImagesUpdated?.(updated);
       setCurrentIndex(updated.length - 1);
       window.dispatchEvent(new CustomEvent('purchases-updated'));
       showToast('Foto adicionada com sucesso!');
@@ -126,6 +132,7 @@ export default function PurchaseImageLightbox({
       const updated = await getPurchaseImages(purchaseId);
       setImages(updated);
       onImagesChange?.(updated);
+      onImagesUpdated?.(updated);
       window.dispatchEvent(new CustomEvent('purchases-updated'));
       showToast('Foto definida como principal!');
     } catch (err) {
@@ -149,6 +156,7 @@ export default function PurchaseImageLightbox({
       const updated = await getPurchaseImages(purchaseId);
       setImages(updated);
       onImagesChange?.(updated);
+      onImagesUpdated?.(updated);
       setCurrentIndex((prev) => Math.max(0, Math.min(prev, updated.length - 1)));
       window.dispatchEvent(new CustomEvent('purchases-updated'));
       showToast('Foto removida com sucesso!');
@@ -194,7 +202,7 @@ export default function PurchaseImageLightbox({
           </div>
           <div className="min-w-0">
             <h3 className="text-sm font-bold text-white truncate max-w-md">
-              {productName}
+              {resolvedProductName}
             </h3>
             <p className="text-[11px] text-white/50 flex items-center gap-2">
               {images.length > 0 ? (
@@ -310,7 +318,7 @@ export default function PurchaseImageLightbox({
           {images.length > 0 && currentImage ? (
             <img
               src={currentImage.public_url}
-              alt={currentImage.file_name || productName}
+              alt={currentImage.file_name || resolvedProductName}
               className="max-h-full max-w-full object-contain rounded-2xl shadow-2xl transition-all duration-300 select-none border border-white/10"
             />
           ) : (

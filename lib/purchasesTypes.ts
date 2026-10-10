@@ -60,7 +60,9 @@ export interface HousePurchase {
   due_date?: string | null; // YYYY-MM-DD
   category: PurchaseCategory;
   supplier?: string | null;
+  suggested_store?: string | null;
   product_url?: string | null; // Link do produto / loja online com redirecionamento direto
+  store_url?: string | null;
   primary_image_url?: string | null;
   images?: PurchaseImage[];
   images_count?: number;
@@ -91,4 +93,7 @@ export interface PurchaseStats {
   totalEstimated: number;
   totalPaid: number;
   pendingEstimated: number;
+  totalEstimatedPending: number;
+  totalPendingCount: number;
 }
+

@@ -977,18 +977,21 @@ export function computePurchasesStats(purchases: HousePurchase[]): PurchaseStats
   let blockedCount = 0;
   let canBuyNowCount = 0;
   let completedCount = 0;
+  let totalPendingCount = 0;
   let totalEstimated = 0;
   let totalPaid = 0;
   let pendingEstimated = 0;
 
   purchases.forEach(p => {
-    totalEstimated += p.estimated_price || 0;
+    const itemTotalEstimated = (p.estimated_price || 0) * (p.quantity || 1);
+    totalEstimated += itemTotalEstimated;
 
     if (p.status === 'COMPRADO') {
       completedCount++;
-      totalPaid += p.paid_price || p.estimated_price || 0;
+      totalPaid += p.paid_price || itemTotalEstimated || 0;
     } else if (p.status !== 'CANCELADO') {
-      pendingEstimated += p.estimated_price || 0;
+      totalPendingCount++;
+      pendingEstimated += p.paid_price && p.paid_price > 0 ? p.paid_price : itemTotalEstimated;
 
       if (p.status === 'AGUARDANDO_DEPENDENCIA') {
         blockedCount++;
@@ -1018,6 +1021,9 @@ export function computePurchasesStats(purchases: HousePurchase[]): PurchaseStats
     completedCount,
     totalEstimated,
     totalPaid,
-    pendingEstimated
+    pendingEstimated,
+    totalEstimatedPending: pendingEstimated,
+    totalPendingCount
   };
 }
+

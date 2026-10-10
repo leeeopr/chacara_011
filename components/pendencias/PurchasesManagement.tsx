@@ -830,16 +830,16 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
                       </div>
                     )}
 
-                    {item.suggested_store && (
+                    {(item.supplier || item.suggested_store) && (
                       <div className="flex items-center gap-1.5">
                         <ShoppingBag size={13} className="text-amber-400 shrink-0" />
-                        <span className="truncate">Loja: <strong className="text-white">{item.suggested_store}</strong></span>
+                        <span className="truncate">Loja: <strong className="text-white">{item.supplier || item.suggested_store}</strong></span>
                       </div>
                     )}
 
-                    {item.store_url && (
+                    {(item.product_url || item.store_url) && (
                       <a
-                        href={item.store_url}
+                        href={(item.product_url || item.store_url || '').startsWith('http') ? (item.product_url || item.store_url)! : `https://${item.product_url || item.store_url}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1 pt-0.5 truncate"
