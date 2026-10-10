@@ -24,17 +24,16 @@ import {
   IdCard,
   Eye,
   ArrowUpDown,
-  BookmarkCheck,
-  Square,
-  CheckSquare,
-  Layers
+  RotateCcw,
+  Clock,
+  BookmarkCheck
 } from 'lucide-react';
 import { CarneLeaoDocEntry } from '@/lib/fiscalTypes';
 import { Chacara } from '@/lib/chacaraTypes';
-import {
-  getCarneLeaoEntries,
-  updatePaymentDocumentCpf,
-  togglePaymentDocumentDeduction
+import { 
+  getCarneLeaoEntries, 
+  updatePaymentDocumentCpf, 
+  togglePaymentDocumentDeduction 
 } from '@/services/fiscalService';
 import { getChacaras } from '@/services/chacarasService';
 import { formatCPF, cleanCPF, validateCPF } from '@/lib/cpfUtils';
@@ -61,6 +60,9 @@ export default function ReservationsCarneLeaoTab({
   const [endDate, setEndDate] = useState('');
   const [dateFilterType, setDateFilterType] = useState<'payment_date' | 'reservation_date'>('payment_date');
 
+  // Deduction toggle state
+  const [togglingDocId, setTogglingDocId] = useState<string | null>(null);
+
   // Copy feedback state: mapping of docId -> boolean
   const [copiedDocId, setCopiedDocId] = useState<string | null>(null);
 
@@ -69,9 +71,6 @@ export default function ReservationsCarneLeaoTab({
   const [editingCpfValue, setEditingCpfValue] = useState<string>('');
   const [savingDocId, setSavingDocId] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
-
-  // Toggle deduction loading state
-  const [togglingDeductionId, setTogglingDeductionId] = useState<string | null>(null);
 
   // Upload/Manage Modal state for a selected reservation
   const [selectedReservationForModal, setSelectedReservationForModal] = useState<any | null>(null);
@@ -83,7 +82,7 @@ export default function ReservationsCarneLeaoTab({
 
   useEffect(() => {
     loadData();
-  }, [chacaraFilter, statusCpfFilter, statusDeductionFilter, startDate, endDate]);
+  }, [chacaraFilter, statusCpfFilter, startDate, endDate]);
 
   const loadChacaras = async () => {
     try {
@@ -100,7 +99,6 @@ export default function ReservationsCarneLeaoTab({
       const res = await getCarneLeaoEntries({
         chacara_id: chacaraFilter !== 'TODAS' ? chacaraFilter : undefined,
         cpf_status: statusCpfFilter,
-        deduction_status: statusDeductionFilter,
         startDate: startDate || undefined,
         endDate: endDate || undefined
       });
@@ -122,11 +120,44 @@ export default function ReservationsCarneLeaoTab({
     await loadData();
   };
 
+  // Toggle Deduction Status for a Document
+  const handleToggleDeduction = async (entry: CarneLeaoDocEntry) => {
+    const nextStatus = !entry.is_deducted;
+    setTogglingDocId(entry.id);
+
+    // Optimistic UI update
+    setEntries(prev => (Array.isArray(prev) ? prev : []).map(item => {
+      if (item.id === entry.id) {
+        return {
+          ...item,
+          is_deducted: nextStatus,
+          deducted_at: nextStatus ? new Date().toISOString() : undefined,
+          document: {
+            ...item.document,
+            is_deducted: nextStatus,
+            deducted_at: nextStatus ? new Date().toISOString() : undefined
+          }
+        };
+      }
+      return item;
+    }));
+
+    try {
+      await togglePaymentDocumentDeduction(entry.id, nextStatus);
+    } catch (err) {
+      console.error('Erro ao atualizar status de dedução do comprovante:', err);
+      // Revert in case of error
+      await loadData();
+    } finally {
+      setTogglingDocId(null);
+    }
+  };
+
   // Client-side search & deduction filtering
   const filteredEntries = useMemo(() => {
     let list = Array.isArray(entries) ? entries : [];
 
-    // Filter deduction status
+    // Filter by Deduction Status
     if (statusDeductionFilter === 'DEDUZIDO') {
       list = list.filter(item => item.is_deducted);
     } else if (statusDeductionFilter === 'NAO_DEDUZIDO') {
@@ -150,8 +181,7 @@ export default function ReservationsCarneLeaoTab({
 
   // KPIs
   const stats = useMemo(() => {
-    const list = Array.isArray(filteredEntries) ? filteredEntries : [];
-    const allList = Array.isArray(entries) ? entries : [];
+    const list = Array.isArray(entries) ? entries : [];
     const totalDocs = list.length;
     const informedDocs = list.filter(e => e.cpf_status === 'INFORMADO').length;
     const pendingDocs = list.filter(e => e.cpf_status === 'PENDENTE').length;
@@ -159,51 +189,21 @@ export default function ReservationsCarneLeaoTab({
 
     const deductedDocs = list.filter(e => e.is_deducted).length;
     const deductedAmount = list.filter(e => e.is_deducted).reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
     const pendingDeductionDocs = list.filter(e => !e.is_deducted).length;
     const pendingDeductionAmount = list.filter(e => !e.is_deducted).reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
-    // Global counts across all current entries
-    const allDeductedDocs = allList.filter(e => e.is_deducted).length;
-    const allPendingDeductionDocs = allList.filter(e => !e.is_deducted).length;
-
-    return {
-      totalDocs,
-      informedDocs,
-      pendingDocs,
+    return { 
+      totalDocs, 
+      informedDocs, 
+      pendingDocs, 
       totalAmount,
       deductedDocs,
       deductedAmount,
       pendingDeductionDocs,
-      pendingDeductionAmount,
-      allDeductedDocs,
-      allPendingDeductionDocs
+      pendingDeductionAmount
     };
-  }, [filteredEntries, entries]);
-
-  // Toggle Deduction Action
-  const handleToggleDeduction = async (entry: CarneLeaoDocEntry) => {
-    const nextVal = !entry.is_deducted;
-    setTogglingDeductionId(entry.id);
-
-    try {
-      await togglePaymentDocumentDeduction(entry.id, nextVal);
-      // Immediate local state update for instantaneous feedback
-      setEntries(prev => (Array.isArray(prev) ? prev : []).map(item => {
-        if (item.id === entry.id) {
-          return {
-            ...item,
-            is_deducted: nextVal,
-            deducted_at: nextVal ? new Date().toISOString() : undefined
-          };
-        }
-        return item;
-      }));
-    } catch (err) {
-      console.error('Erro ao alternar dedução do comprovante:', err);
-    } finally {
-      setTogglingDeductionId(null);
-    }
-  };
+  }, [entries]);
 
   // 1-Click Copy CPF
   const handleCopyCpf = async (docId: string, rawCpf: string) => {
@@ -342,6 +342,7 @@ export default function ReservationsCarneLeaoTab({
 
       {/* KPI Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Total Docs */}
         <div className="glass p-4 rounded-2xl border border-white/10">
           <span className="text-[10px] font-bold text-white/40 uppercase block">
             Total de Comprovantes
@@ -350,63 +351,66 @@ export default function ReservationsCarneLeaoTab({
             <span className="text-xl font-black text-white">{stats.totalDocs}</span>
             <FileText size={16} className="text-white/30" />
           </div>
-          <span className="text-[10px] text-white/40 mt-1 block">
+          <span className="text-[10px] text-white/50 mt-1 block">
             R$ {stats.totalAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} comprovados
           </span>
         </div>
 
+        {/* Deduzidos no Carnê-Leão */}
         <div className="glass p-4 rounded-2xl border border-emerald-500/20 bg-emerald-950/10">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-bold text-emerald-400/80 uppercase block">
-              Deduzidos no Carnê-Leão
+              Deduzidos Carnê-Leão
             </span>
-            <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded">
-              {stats.deductedDocs} docs
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-500/20 text-emerald-300">
+              Escriturados
             </span>
           </div>
           <div className="flex items-baseline justify-between mt-1">
-            <span className="text-xl font-black text-emerald-400">
-              R$ {stats.deductedAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-            <BookmarkCheck size={16} className="text-emerald-400" />
+            <span className="text-xl font-black text-emerald-400">{stats.deductedDocs}</span>
+            <CheckCircle2 size={16} className="text-emerald-400" />
           </div>
-          <span className="text-[10px] text-emerald-400/60 mt-1 block">
-            Marcados como deduzidos no livro fiscal
+          <span className="text-[10px] text-emerald-400/70 mt-1 block font-semibold">
+            R$ {stats.deductedAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
         </div>
 
-        <div className="glass p-4 rounded-2xl border border-purple-500/20 bg-purple-950/10">
+        {/* A Lançar (Não Deduzidos) */}
+        <div className="glass p-4 rounded-2xl border border-amber-500/20 bg-amber-950/10">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold text-purple-300 uppercase block">
-              Não Deduzidos (A Lançar)
+            <span className="text-[10px] font-bold text-amber-400/80 uppercase block">
+              A Lançar (Pendentes)
             </span>
-            <span className="text-[10px] font-bold bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">
-              {stats.pendingDeductionDocs} docs
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-500/20 text-amber-300">
+              Não Deduzidos
             </span>
           </div>
           <div className="flex items-baseline justify-between mt-1">
-            <span className="text-xl font-black text-purple-300">
-              R$ {stats.pendingDeductionAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-            <AlertTriangle size={16} className="text-purple-300" />
+            <span className="text-xl font-black text-amber-400">{stats.pendingDeductionDocs}</span>
+            <Clock size={16} className="text-amber-400" />
           </div>
-          <span className="text-[10px] text-purple-300/60 mt-1 block">
-            Aguardando lançamento fiscal
+          <span className="text-[10px] text-amber-400/70 mt-1 block font-semibold">
+            R$ {stats.pendingDeductionAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
         </div>
 
+        {/* CPFs do Pagador */}
         <div className="glass p-4 rounded-2xl border border-[#FFD600]/20 bg-[#FFD600]/5">
           <span className="text-[10px] font-bold text-[#FFD600]/80 uppercase block">
             Situação dos CPFs
           </span>
           <div className="flex items-baseline justify-between mt-1">
             <span className="text-xl font-black text-[#FFD600]">
-              {stats.informedDocs} / {stats.totalDocs}
+              {stats.informedDocs} <span className="text-xs font-normal text-white/50">/ {stats.totalDocs}</span>
             </span>
             <IdCard size={16} className="text-[#FFD600]" />
           </div>
-          <span className="text-[10px] text-[#FFD600]/60 mt-1 block">
-            {stats.pendingDocs} comprovante(s) sem CPF
+          <span className="text-[10px] text-white/50 mt-1 block">
+            {stats.pendingDocs > 0 ? (
+              <span className="text-amber-400 font-semibold">{stats.pendingDocs} sem CPF cadastrado</span>
+            ) : (
+              <span className="text-emerald-400 font-semibold">Todos com CPF</span>
+            )}
           </span>
         </div>
       </div>
@@ -415,7 +419,7 @@ export default function ReservationsCarneLeaoTab({
       <div className="glass p-4 rounded-2xl border border-white/10 space-y-3">
         <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3">
           {/* Search Box */}
-          <div className="relative flex-1">
+          <div className="relative flex-1 w-full">
             <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" />
             <input
               type="text"
@@ -426,57 +430,57 @@ export default function ReservationsCarneLeaoTab({
             />
           </div>
 
-          {/* Dedução Filter Pills */}
-          <div className="flex items-center gap-1 p-1 bg-black/40 border border-white/10 rounded-xl shrink-0 overflow-x-auto">
-            <span className="text-[10px] uppercase font-bold text-white/40 px-2 hidden sm:inline">
-              Dedução:
+          {/* Quick Deduction Status Filter */}
+          <div className="flex items-center gap-1.5 p-1 bg-black/40 border border-white/10 rounded-xl shrink-0 overflow-x-auto">
+            <span className="text-[10px] uppercase font-bold text-white/40 px-2 flex items-center gap-1">
+              <BookmarkCheck size={12} /> Carnê-Leão:
             </span>
             <button
               type="button"
               onClick={() => setStatusDeductionFilter('TODOS')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
                 statusDeductionFilter === 'TODOS'
                   ? 'bg-white/15 text-white'
                   : 'text-white/50 hover:text-white'
               }`}
             >
-              Todos ({Array.isArray(entries) ? entries.length : 0})
+              Todos ({stats.totalDocs})
             </button>
             <button
               type="button"
               onClick={() => setStatusDeductionFilter('DEDUZIDO')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1 cursor-pointer ${
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1 cursor-pointer ${
                 statusDeductionFilter === 'DEDUZIDO'
-                  ? 'bg-emerald-500 text-black shadow'
+                  ? 'bg-emerald-500 text-black shadow font-black'
                   : 'text-emerald-400 hover:text-emerald-300'
               }`}
             >
-              <BookmarkCheck size={13} />
-              <span>Deduzidos ({stats.allDeductedDocs})</span>
+              <CheckCircle2 size={12} />
+              <span>Deduzidos ({stats.deductedDocs})</span>
             </button>
             <button
               type="button"
               onClick={() => setStatusDeductionFilter('NAO_DEDUZIDO')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1 cursor-pointer ${
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1 cursor-pointer ${
                 statusDeductionFilter === 'NAO_DEDUZIDO'
-                  ? 'bg-purple-500 text-white shadow'
-                  : 'text-purple-300 hover:text-purple-200'
+                  ? 'bg-amber-500 text-black shadow font-black'
+                  : 'text-amber-400 hover:text-amber-300'
               }`}
             >
-              <Square size={13} />
-              <span>Não Deduzidos ({stats.allPendingDeductionDocs})</span>
+              <Clock size={12} />
+              <span>A Lançar ({stats.pendingDeductionDocs})</span>
             </button>
           </div>
 
           {/* Quick CPF Status Filter */}
-          <div className="flex items-center gap-1 p-1 bg-black/40 border border-white/10 rounded-xl shrink-0 overflow-x-auto">
-            <span className="text-[10px] uppercase font-bold text-white/40 px-2 hidden sm:inline">
-              CPF:
+          <div className="flex items-center gap-1.5 p-1 bg-black/40 border border-white/10 rounded-xl shrink-0 overflow-x-auto">
+            <span className="text-[10px] uppercase font-bold text-white/40 px-2 flex items-center gap-1">
+              <IdCard size={12} /> CPF:
             </span>
             <button
               type="button"
               onClick={() => setStatusCpfFilter('TODOS')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
                 statusCpfFilter === 'TODOS'
                   ? 'bg-white/15 text-white'
                   : 'text-white/50 hover:text-white'
@@ -487,9 +491,9 @@ export default function ReservationsCarneLeaoTab({
             <button
               type="button"
               onClick={() => setStatusCpfFilter('INFORMADO')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1 cursor-pointer ${
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1 cursor-pointer ${
                 statusCpfFilter === 'INFORMADO'
-                  ? 'bg-emerald-500 text-black shadow'
+                  ? 'bg-emerald-500 text-black shadow font-black'
                   : 'text-emerald-400 hover:text-emerald-300'
               }`}
             >
@@ -499,14 +503,14 @@ export default function ReservationsCarneLeaoTab({
             <button
               type="button"
               onClick={() => setStatusCpfFilter('PENDENTE')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1 cursor-pointer ${
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1 cursor-pointer ${
                 statusCpfFilter === 'PENDENTE'
-                  ? 'bg-amber-500 text-black shadow'
+                  ? 'bg-amber-500 text-black shadow font-black'
                   : 'text-amber-400 hover:text-amber-300'
               }`}
             >
               <AlertCircle size={12} />
-              <span>Pendente ({stats.pendingDocs})</span>
+              <span>Sem CPF ({stats.pendingDocs})</span>
             </button>
           </div>
         </div>
@@ -655,6 +659,55 @@ export default function ReservationsCarneLeaoTab({
                     </span>
                   </div>
 
+                  {/* Carnê-Leão Deduction Status & 1-Click Toggle */}
+                  <div className={`min-w-[190px] p-2.5 rounded-xl border transition-all flex flex-col justify-between ${
+                    entry.is_deducted 
+                      ? 'bg-emerald-950/20 border-emerald-500/30' 
+                      : 'bg-black/30 border-white/10'
+                  }`}>
+                    <div className="flex items-center justify-between gap-1.5 mb-1.5">
+                      <span className="text-[10px] uppercase font-bold text-white/50 flex items-center gap-1">
+                        <BookmarkCheck size={12} className={entry.is_deducted ? 'text-emerald-400' : 'text-purple-400'} /> Carnê-Leão
+                      </span>
+
+                      {entry.is_deducted ? (
+                        <span className="px-2 py-0.5 rounded text-[9px] font-black bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                          <CheckCircle2 size={10} /> DEDUZIDO
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded text-[9px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center gap-1">
+                          <Clock size={10} /> A LANÇAR
+                        </span>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleToggleDeduction(entry)}
+                      disabled={togglingDocId === entry.id}
+                      className={`w-full py-1.5 px-2 rounded-lg text-[10px] font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 ${
+                        entry.is_deducted
+                          ? 'bg-white/10 hover:bg-rose-500/20 text-white/80 hover:text-rose-300 border border-white/10 hover:border-rose-500/30'
+                          : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-md shadow-emerald-500/20'
+                      }`}
+                      title={entry.is_deducted ? 'Clique para desmarcar como deduzido' : 'Marcar este comprovante como deduzido no Carnê-Leão'}
+                    >
+                      {togglingDocId === entry.id ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : entry.is_deducted ? (
+                        <>
+                          <RotateCcw size={11} />
+                          <span>Desmarcar Dedução</span>
+                        </>
+                      ) : (
+                        <>
+                          <Check size={12} />
+                          <span>Marcar como Deduzido</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
                   {/* CPF Column / Box */}
                   <div className="min-w-[240px] p-2.5 bg-black/30 rounded-xl border border-white/10">
                     <div className="flex items-center justify-between gap-2 mb-1">
@@ -753,60 +806,6 @@ export default function ReservationsCarneLeaoTab({
                           <span>Cadastrar CPF</span>
                         </button>
                       </div>
-                    )}
-                  </div>
-
-                  {/* Dedução Carnê-Leão Control */}
-                  <div className="min-w-[160px] p-2.5 bg-black/30 rounded-xl border border-white/10 flex flex-col justify-between">
-                    <div className="flex items-center justify-between gap-1 mb-1.5">
-                      <span className="text-[10px] uppercase font-bold text-white/50 flex items-center gap-1">
-                        <BookmarkCheck size={12} className={entry.is_deducted ? 'text-emerald-400' : 'text-purple-400'} />
-                        Dedução Carnê-Leão
-                      </span>
-                      {entry.is_deducted ? (
-                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                          DEDUZIDO
-                        </span>
-                      ) : (
-                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                          A LANÇAR
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleDeduction(entry)}
-                        disabled={togglingDeductionId === entry.id}
-                        className={`w-full py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border ${
-                          entry.is_deducted
-                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/40 group'
-                            : 'bg-white/5 hover:bg-[#FFD600] hover:text-[#0A0F2C] text-white/70 border-white/10 hover:border-[#FFD600]'
-                        }`}
-                        title={entry.is_deducted ? "Clique para desmarcar dedução deste comprovante" : "Clique para marcar como deduzido no Carnê-Leão"}
-                      >
-                        {togglingDeductionId === entry.id ? (
-                          <Loader2 size={12} className="animate-spin text-white" />
-                        ) : entry.is_deducted ? (
-                          <>
-                            <CheckSquare size={13} className="text-emerald-400 group-hover:hidden" />
-                            <Square size={13} className="text-rose-400 hidden group-hover:inline" />
-                            <span className="group-hover:hidden">Deduzido ✓</span>
-                            <span className="hidden group-hover:inline">Desmarcar</span>
-                          </>
-                        ) : (
-                          <>
-                            <Square size={13} className="text-white/40" />
-                            <span>Marcar Deduzido</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                    {entry.is_deducted && entry.deducted_at && (
-                      <span className="text-[9px] text-emerald-400/60 mt-1 block truncate">
-                        Lançado em {new Date(entry.deducted_at).toLocaleDateString('pt-BR')}
-                      </span>
                     )}
                   </div>
 

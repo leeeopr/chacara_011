@@ -888,16 +888,26 @@ export function checkCircularDependency(
  */
 export async function markPurchaseAsBought(
   id: string,
-  paidPrice: number,
+  paidPriceOrOptions: number | { paid_price: number; sync_to_financial?: boolean; chacara_id?: string | null },
   createFinancialEntry: boolean = true,
   chacaraId?: string | null
 ): Promise<HousePurchase> {
   const now = new Date().toISOString();
 
+  const paidPrice = typeof paidPriceOrOptions === 'number'
+    ? paidPriceOrOptions
+    : Number(paidPriceOrOptions.paid_price || 0);
+  const shouldSyncFinancial = typeof paidPriceOrOptions === 'number'
+    ? createFinancialEntry
+    : (paidPriceOrOptions.sync_to_financial ?? true);
+  const resolvedChacaraId = typeof paidPriceOrOptions === 'number'
+    ? chacaraId
+    : (paidPriceOrOptions.chacara_id ?? chacaraId);
+
   let transactionId: string | undefined = undefined;
 
   // 1. If financial entry is requested, create or update financial transaction
-  if (createFinancialEntry && paidPrice > 0) {
+  if (shouldSyncFinancial && paidPrice > 0) {
     try {
       if (!isDemoMode()) {
         const expensePayload = {
@@ -932,7 +942,7 @@ export async function markPurchaseAsBought(
     paid_price: paidPrice,
     completed_at: now,
     transaction_id: transactionId,
-    chacara_id: chacaraId || undefined
+    chacara_id: resolvedChacaraId || undefined
   });
 
   return updated;

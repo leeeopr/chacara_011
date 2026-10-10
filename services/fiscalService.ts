@@ -620,76 +620,62 @@ export async function updatePaymentDocumentCpf(docId: string, cpf: string): Prom
   };
 }
 
-const DEDUCTED_DOCS_KEY = 'carne_leao_deducted_docs_v1';
+const DEDUCTED_STORAGE_KEY = 'carne_leao_deducted_docs_map';
 
-export function getDeductedDocsMap(): Record<string, { is_deducted: boolean; deducted_at?: string }> {
+export function getDeductedDocsMap(): Record<string, { is_deducted: boolean; deducted_at: string }> {
   if (typeof window === 'undefined') return {};
   try {
-    const raw = localStorage.getItem(DEDUCTED_DOCS_KEY);
+    const raw = localStorage.getItem(DEDUCTED_STORAGE_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
   }
 }
 
-export function saveDeductedDocsMap(map: Record<string, { is_deducted: boolean; deducted_at?: string }>) {
+export function saveDeductedDocsMap(map: Record<string, { is_deducted: boolean; deducted_at: string }>) {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(DEDUCTED_DOCS_KEY, JSON.stringify(map));
-  } catch (e) {
-    console.warn('Erro ao salvar mapa de deduzidos no localStorage:', e);
-  }
+    localStorage.setItem(DEDUCTED_STORAGE_KEY, JSON.stringify(map));
+  } catch {}
 }
 
-/**
- * Marca ou desmarca um comprovante como 'Deduzido no Carnê-Leão'
- * Persiste no Supabase e no armazenamento local garantindo funcionamento imediato
- */
-export async function togglePaymentDocumentDeduction(
-  docId: string,
-  isDeducted: boolean
-): Promise<{ docId: string; is_deducted: boolean; deducted_at?: string }> {
+export async function togglePaymentDocumentDeduction(docId: string, isDeducted: boolean): Promise<boolean> {
   const deductedAt = isDeducted ? new Date().toISOString() : undefined;
+  
+  // 1. Update localStorage cache
+  const currentMap = getDeductedDocsMap();
+  if (isDeducted) {
+    currentMap[docId] = { is_deducted: true, deducted_at: deductedAt! };
+  } else {
+    delete currentMap[docId];
+  }
+  saveDeductedDocsMap(currentMap);
 
-  // 1. Atualiza persistência local
-  const map = getDeductedDocsMap();
-  map[docId] = {
-    is_deducted: isDeducted,
-    deducted_at: deductedAt
-  };
-  saveDeductedDocsMap(map);
-
-  // 2. Atualiza demo store se presente
-  const store = getDemoDocumentsStore();
-  const docIdx = store.findIndex(d => d.id === docId);
-  if (docIdx >= 0) {
-    store[docIdx] = {
-      ...store[docIdx],
-      is_deducted: isDeducted,
-      deducted_at: deductedAt
-    };
-    saveDemoDocumentsStore(store);
+  // 2. Update Demo Store if applicable
+  const demoDocs = getDemoDocumentsStore();
+  const foundIdx = demoDocs.findIndex(d => d.id === docId);
+  if (foundIdx >= 0) {
+    demoDocs[foundIdx].is_deducted = isDeducted;
+    demoDocs[foundIdx].deducted_at = deductedAt;
+    saveDemoDocumentsStore(demoDocs);
   }
 
-  // 3. Tenta persistir no Supabase (coluna is_deducted / deducted_at)
-  try {
-    await supabase
-      .from('reservation_payment_documents')
-      .update({
-        is_deducted: isDeducted,
-        deducted_at: isDeducted ? new Date().toISOString() : null,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', docId);
-  } catch (err) {
-    console.warn('[fiscalService] Aviso ao persistir deduction no Supabase (persistido localmente):', err);
+  // 3. Update Supabase if live
+  if (!isDemoMode()) {
+    try {
+      await supabase
+        .from('reservation_payment_documents')
+        .update({
+          is_deducted: isDeducted,
+          deducted_at: deductedAt || null
+        })
+        .eq('id', docId);
+    } catch (err) {
+      console.warn('[fiscalService] Aviso ao persistir is_deducted no banco (usando cache local):', err);
+    }
   }
 
-  return {
-    docId,
-    is_deducted: isDeducted,
-    deducted_at: deductedAt
-  };
+  return true;
 }
 
 export interface CarneLeaoFilterParams {
@@ -713,10 +699,10 @@ export async function getCarneLeaoEntries(filters?: CarneLeaoFilterParams): Prom
   totalDocs: number;
   totalWithCpf: number;
   totalPendingCpf: number;
-  totalDeducted: number;
   totalDeductedAmount: number;
-  totalPendingDeduction: number;
   totalPendingDeductionAmount: number;
+  totalDeductedDocs: number;
+  totalPendingDeductionDocs: number;
   availableCompetencias: { value: string; label: string; count: number }[];
 }> {
   // 1. Carrega reservas e chácaras registradas
@@ -802,8 +788,6 @@ export async function getCarneLeaoEntries(filters?: CarneLeaoFilterParams): Prom
     });
 
   // 4. Mapeia cada comprovante para uma entrada estruturada
-  const deductedMap = getDeductedDocsMap();
-
   const entries: CarneLeaoDocEntry[] = allDocs.map(doc => {
     const res = resMap.get(doc.reservation_id);
     const chacaraNome = res?.chacara?.name || (res?.chacara as any)?.nome || chacaraMap.get(res?.chacara_id || '') || 'Chácara';
@@ -815,15 +799,19 @@ export async function getCarneLeaoEntries(filters?: CarneLeaoFilterParams): Prom
     const hasValidCpf = digits.length === 11;
     const cpfStatus: 'INFORMADO' | 'PENDENTE' = hasValidCpf ? 'INFORMADO' : 'PENDENTE';
 
-    const localDeduction = deductedMap[doc.id];
-    const isDeducted = localDeduction !== undefined 
-      ? localDeduction.is_deducted 
-      : Boolean(doc.is_deducted || (doc as any).deduzido);
-    const deductedAt = localDeduction?.deducted_at || doc.deducted_at;
+    const deductedMap = getDeductedDocsMap();
+    const isDeducted = deductedMap[doc.id] !== undefined 
+      ? Boolean(deductedMap[doc.id].is_deducted) 
+      : Boolean((doc as any).is_deducted);
+    const deductedAt = deductedMap[doc.id]?.deducted_at || (doc as any).deducted_at;
 
     return {
       id: doc.id,
-      document: doc,
+      document: {
+        ...doc,
+        is_deducted: isDeducted,
+        deducted_at: deductedAt
+      },
       reservation_id: doc.reservation_id,
       reservation_code: res?.code || `RES-${doc.reservation_id.substring(0, 6)}`,
       chacara_id: res?.chacara_id || '',
@@ -878,7 +866,7 @@ export async function getCarneLeaoEntries(filters?: CarneLeaoFilterParams): Prom
 
   if (filters?.deduction_status && filters.deduction_status !== 'TODOS') {
     if (filters.deduction_status === 'DEDUZIDO') {
-      filtered = filtered.filter(e => e.is_deducted === true);
+      filtered = filtered.filter(e => e.is_deducted);
     } else if (filters.deduction_status === 'NAO_DEDUZIDO') {
       filtered = filtered.filter(e => !e.is_deducted);
     }
@@ -903,10 +891,11 @@ export async function getCarneLeaoEntries(filters?: CarneLeaoFilterParams): Prom
   const totalDocs = filtered.length;
   const totalWithCpf = filtered.filter(e => e.cpf_status === 'INFORMADO').length;
   const totalPendingCpf = filtered.filter(e => e.cpf_status === 'PENDENTE').length;
-  const totalDeducted = filtered.filter(e => e.is_deducted).length;
+
   const totalDeductedAmount = filtered.filter(e => e.is_deducted).reduce((acc, curr) => acc + curr.amount, 0);
-  const totalPendingDeduction = filtered.filter(e => !e.is_deducted).length;
   const totalPendingDeductionAmount = filtered.filter(e => !e.is_deducted).reduce((acc, curr) => acc + curr.amount, 0);
+  const totalDeductedDocs = filtered.filter(e => e.is_deducted).length;
+  const totalPendingDeductionDocs = filtered.filter(e => !e.is_deducted).length;
 
   return {
     entries: filtered,
@@ -914,10 +903,10 @@ export async function getCarneLeaoEntries(filters?: CarneLeaoFilterParams): Prom
     totalDocs,
     totalWithCpf,
     totalPendingCpf,
-    totalDeducted,
     totalDeductedAmount,
-    totalPendingDeduction,
     totalPendingDeductionAmount,
+    totalDeductedDocs,
+    totalPendingDeductionDocs,
     availableCompetencias
   };
 }

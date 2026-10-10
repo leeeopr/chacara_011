@@ -285,10 +285,12 @@ export default function PurchasesManagement({ onOpenTaskDetail }: PurchasesManag
     if (!itemToMarkBought) return;
     setSavingBought(true);
     try {
-      await markPurchaseAsBought(itemToMarkBought.id, {
-        paid_price: Number(paidPriceInput) || 0,
-        sync_to_financial: syncFinancialInput
-      });
+      await markPurchaseAsBought(
+        itemToMarkBought.id,
+        Number(paidPriceInput) || 0,
+        syncFinancialInput,
+        itemToMarkBought.chacara_id
+      );
       setItemToMarkBought(null);
       await loadData();
     } catch (e: any) {

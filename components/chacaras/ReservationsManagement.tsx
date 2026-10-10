@@ -179,7 +179,7 @@ export default function ReservationsManagement({
           }`}
         >
           <IdCard size={16} />
-          <span>Carnê-Leão</span>
+          <span>Gestão de Comprovantes (Carnê-Leão)</span>
           <span className={`px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider ${
             activeSubTab === 'carne_leao' ? 'bg-[#0A0F2C]/20 text-[#0A0F2C]' : 'bg-purple-500/20 text-purple-300'
           }`}>

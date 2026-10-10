@@ -16,8 +16,8 @@ export interface PaymentDocument {
   cpf?: string; // CPF do pagador/responsável pelo pagamento (Carnê-Leão)
   payer_document?: string; // Coluna persistida no banco Supabase
   payer_name?: string;
-  is_deducted?: boolean; // Se foi marcado como deduzido no Carnê-Leão
-  deducted_at?: string;
+  is_deducted?: boolean; // Se foi lançado/deduzido no Carnê-Leão
+  deducted_at?: string; // Data em que foi marcado como deduzido
 }
 
 export interface FiscalReservationItem {
@@ -81,8 +81,6 @@ export interface UpdatePaymentDocumentDTO {
   competencia?: string;
   description?: string;
   observacoes?: string;
-  is_deducted?: boolean;
-  deducted_at?: string;
 }
 
 /**
@@ -109,6 +107,6 @@ export interface CarneLeaoDocEntry {
   public_url?: string;
   competencia?: string;
   description?: string;
-  is_deducted: boolean;
+  is_deducted?: boolean;
   deducted_at?: string;
 }

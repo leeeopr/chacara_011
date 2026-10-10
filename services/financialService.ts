@@ -969,3 +969,12 @@ export async function getGlobalFinancialData(filters?: {
     revenueItems
   };
 }
+
+export async function getFinancialSummary() {
+  const data = await getGlobalFinancialData();
+  return {
+    ...data,
+    caixa_liquido_disponivel: data.receitaRecebida - data.totalReembolsos
+  };
+}
+
