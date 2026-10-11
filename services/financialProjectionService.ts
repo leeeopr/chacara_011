@@ -25,7 +25,7 @@ import { getCrewReservationPayments, getCrewMembers } from './crewService';
 import { getPlanningDecisions } from './planningService';
 import { getChacaras } from './chacarasService';
 import { getFinancialSettings } from './financialSettingsService';
-import { Reservation, Chacara } from '@/lib/chacaraTypes';
+import { Reservation, Chacara, getEffectiveReservationPrice } from '@/lib/chacaraTypes';
 import { formatCurrency } from '@/lib/utils';
 
 /**

@@ -111,14 +111,14 @@ export async function getLiveAppNotifications(): Promise<AppNotification[]> {
 
     // 3. Check urgent pendencias / tasks
     try {
-      const pendencias = await getPendencias({ status: 'ABERTA' });
+      const pendencias = await getPendencias({ status: 'Aberta' });
       pendencias.forEach(p => {
-        if (p.prioridade === 'ALTA' || p.prioridade === 'URGENTE') {
+        if (p.prioridade === 'Alta' || p.prioridade === 'Urgente') {
           notifications.push({
             id: `notif-pend-${p.id}`,
             type: 'PENDENCIA_URGENTE',
             title: `Pendência Urgente: ${p.titulo}`,
-            description: `${p.chacara?.name || 'Geral'} • ${p.descricao || 'Necessita atenção imediata da equipe.'}`,
+            description: `${p.chacara_nome || 'Geral'} • ${p.descricao || 'Necessita atenção imediata da equipe.'}`,
             priority: 'ALTA',
             timestamp: p.created_at,
             actionLabel: 'Resolver Pendência',
